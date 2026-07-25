@@ -1583,7 +1583,8 @@ function AgentStats({ ctx }) {
     const title = range === 'today' ? 'DAILY' : range === 'week' ? 'WEEKLY' : 'MONTHLY';
     
     let text = `*${title} REPORT FORMAT ${ds}:*\n\n`;
-    text += ` *Monthly Target:* ${totalTarget}/${count}\n\n`;
+    const targetPct = totalTarget > 0 ? Math.round((count / totalTarget) * 100) : 0;
+    text += ` *Monthly Target:* ${count}/${totalTarget} (${targetPct}%)\n\n`;
     text += `Total Done: ${count}\n`;
     
     bt.forEach(b => {
