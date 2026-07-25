@@ -15,7 +15,7 @@ import {
   CircleDollarSign, Crown, Home, UserPlus, Trash2, Loader2, RefreshCw,
   ArrowRight, Eye, EyeOff, CheckCircle2, XCircle, Clock, Settings,
   Search, FileText, KeyRound, Wallet, Smartphone, Fingerprint, MapPin, 
-  Edit, Activity, Navigation, FileCheck, Copy
+  Edit, Activity, Navigation, FileCheck, Copy, Download, Target, Calendar
 } from 'lucide-react';
 
 /* ---------------------------------- config ---------------------------------- */
@@ -277,7 +277,7 @@ function agentRows(agents, activities, types, range) {
     const own = activities.filter(x => x.agentPhone === a.phone && isInRange(x.date, range));
     const count = own.reduce((s, x) => s + Number(x.count || 0), 0);
     const value = own.reduce((s, x) => s + Number(x.count || 0) * (pm[x.typeId] || 0), 0);
-    return { id: a.phone, name: a.name, phone: a.phone, count, value };
+    return { id: a.phone, name: a.name, phone: a.phone, count, value, target: a.target || 0 };
   }).sort((a, b) => b.count - a.count);
 }
 
@@ -289,6 +289,177 @@ function breakdown(activities, types, range) {
     map[x.typeId].count += Number(x.count || 0);
   });
   return Object.values(map).filter(m => m.count > 0).sort((a, b) => b.count - a.count);
+}
+
+function downloadCSV(data, filename) {
+  if (!data || !data.length) return;
+  const keys = Object.keys(data[0]);
+  const csv = [
+    keys.join(','),
+    ...data.map(row => keys.map(k => `"${String(row[k] || '').replace(/"/g, '""')}"`).join(','))
+  ].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+}
+
+function ReportsView({ ctx }) {
+  const { user, users, activities, logistics, types } = ctx;
+  const [reportType, setReportType] = useState('transactions'); // 'transactions', 'activities', 'logistics'
+  const [startDate, setStartDate] = useState(() => new Date(new Date().setDate(1)).toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [agentFilter, setAgentFilter] = useState('all');
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Determine which agents this user can see
+  const teamPhones = useMemo(() => {
+    if (user.role === 'admin' || user.role === 'super_admin') return null; // all
+    if (user.role === 'supervisor') {
+      const myAgents = users.filter(u => u.supervisorPhone === user.phone).map(u => u.phone);
+      return [...myAgents, user.phone];
+    }
+    return [user.phone]; // agent
+  }, [user, users]);
+
+  const handleGenerate = async () => {
+    setLoading(true);
+    let raw = [];
+    
+    if (reportType === 'transactions') {
+      // Fetch all transactions from KV store
+      raw = await listAll('transactions:', true);
+    } else if (reportType === 'activities') {
+      raw = activities;
+    } else if (reportType === 'logistics') {
+      raw = logistics;
+    }
+
+    // Filter by date
+    let filtered = raw.filter(row => {
+      const rowDate = row.date || row.createdAt || row.created_at;
+      if (!rowDate) return false;
+      const d = rowDate.split('T')[0];
+      return d >= startDate && d <= endDate;
+    });
+
+    // Filter by user role scoping
+    if (teamPhones) {
+      filtered = filtered.filter(row => {
+        const phone = row.userPhone || row.agentPhone || row.requesterPhone;
+        return teamPhones.includes(phone);
+      });
+    }
+
+    // Filter by specific agent if supervisor/admin selected one
+    if (agentFilter !== 'all') {
+      filtered = filtered.filter(row => {
+        const phone = row.userPhone || row.agentPhone || row.requesterPhone;
+        return phone === agentFilter;
+      });
+    }
+
+    // Sort descending
+    filtered.sort((a, b) => new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt));
+
+    // Format data for CSV readability
+    const formatted = filtered.map(row => {
+      const base = {
+        Date: new Date(row.date || row.createdAt).toLocaleString(),
+        User_Phone: row.userPhone || row.agentPhone || row.requesterPhone || 'N/A',
+      };
+      if (reportType === 'transactions') {
+        return { ...base, Service: row.serviceName, Cost: row.cost, Status: row.status, Details: row.detail || row.desc };
+      }
+      if (reportType === 'activities') {
+        return { ...base, Type: row.typeName, Count: row.count, Note: row.note || '' };
+      }
+      if (reportType === 'logistics') {
+        return { ...base, Item: row.item, Quantity: row.qty, Status: row.status, Note: row.note || '' };
+      }
+      return row;
+    });
+
+    setData(formatted);
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <SectionTitle>Report Generator</SectionTitle>
+      
+      <Card className="p-5 space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Field label="Report Type">
+            <Select value={reportType} onChange={e => setReportType(e.target.value)}>
+              <option value="transactions">API Transactions</option>
+              <option value="activities">Work Logs (Activities)</option>
+              <option value="logistics">Logistics (Store)</option>
+            </Select>
+          </Field>
+          <Field label="Start Date">
+            <TextInput type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+          </Field>
+          <Field label="End Date">
+            <TextInput type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+          </Field>
+          {(user.role === 'admin' || user.role === 'super_admin' || user.role === 'supervisor') && (
+            <Field label="Agent Filter">
+              <Select value={agentFilter} onChange={e => setAgentFilter(e.target.value)}>
+                <option value="all">Entire Team / All</option>
+                {users
+                  .filter(u => u.role === 'agent')
+                  .filter(u => user.role === 'supervisor' ? u.supervisorPhone === user.phone : true)
+                  .map(u => <option key={u.phone} value={u.phone}>{u.name} ({u.phone})</option>)
+                }
+              </Select>
+            </Field>
+          )}
+        </div>
+        
+        <div className="flex gap-3 justify-end border-t border-slate-100 pt-4">
+          <Btn onClick={handleGenerate} disabled={loading} icon={loading ? Loader2 : FileText}>
+            {loading ? 'Generating...' : 'Generate Report'}
+          </Btn>
+          {data.length > 0 && (
+            <Btn tone="green" onClick={() => downloadCSV(data, `${reportType}_report_${startDate}_to_${endDate}.csv`)} icon={Download}>
+              Download CSV ({data.length} records)
+            </Btn>
+          )}
+        </div>
+      </Card>
+
+      {data.length > 0 && (
+        <Card className="p-0 overflow-hidden">
+          <div className="p-4 bg-slate-50 border-b border-slate-200">
+            <h4 className="font-bold text-slate-700">Report Preview (Top 50)</h4>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm whitespace-nowrap">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10px] font-bold">
+                <tr>
+                  {Object.keys(data[0]).map(k => <th key={k} className="px-4 py-3">{k.replace(/_/g, ' ')}</th>)}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {data.slice(0, 50).map((row, i) => (
+                  <tr key={i} className="hover:bg-slate-50/50">
+                    {Object.values(row).map((val, j) => <td key={j} className="px-4 py-3 text-slate-600">{val}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {data.length === 0 && !loading && (
+        <Empty text="Configure your filters and click Generate Report to see data." />
+      )}
+    </div>
+  );
 }
 
 /* ----------------------------------- app root ---------------------------------- */
@@ -577,12 +748,12 @@ function AuthScreen({ onLogin, onSignup, users }) {
 /* ----------------------------------- dashboard shell ----------------------------------- */
 
 const NAV = {
-  agent: [['log', 'Log Work', ClipboardList], ['stats', 'My Stats', TrendingUp], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
-  supervisor: [['team', 'My Team', Users], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
+  agent: [['log', 'Log Work', ClipboardList], ['stats', 'My Stats', TrendingUp], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
+  supervisor: [['team', 'My Team', Users], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
   ict: [['queue', 'Print Queue', Printer], ['profile', 'Profile', User]],
   store: [['requests', 'Requests', Boxes], ['profile', 'Profile', User]],
-  admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
-  super_admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  super_admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
 };
 
 function Dashboard({ user, setUser, users, types, activities, logistics, storeItems, onLogout, refresh, refreshing, flash }) {
@@ -661,6 +832,7 @@ function Dashboard({ user, setUser, users, types, activities, logistics, storeIt
             {view === 'staff' && <StaffManager ctx={ctx} />}
             {view === 'settings' && <SettingsManager ctx={ctx} />}
             {view === 'wallet' && <WalletView ctx={ctx} />}
+            {view === 'reports' && <ReportsView ctx={ctx} />}
             {view === 'profile' && <ProfilePanel ctx={ctx} onLogout={onLogout} />}
           </div>
         </div>
@@ -1374,6 +1546,21 @@ function AgentStats({ ctx }) {
       <div className="grid grid-cols-2 gap-4 mb-8">
         <StatTile label="Registrations" value={count} icon={ClipboardList} />
         <StatTile label="Value Generated" value={fmtNaira(value)} icon={CircleDollarSign} />
+        
+        {user.target > 0 && (
+          <Card className="col-span-2 p-5 flex flex-col justify-center">
+            <div className="flex justify-between mb-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Target Progress</span>
+              <span className="text-xs font-bold text-slate-900">{count} / {user.target}</span>
+            </div>
+            <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+              <div 
+                className={`h-full ${count >= user.target ? 'bg-emerald-500' : 'bg-amber-400'}`} 
+                style={{ width: `${Math.min(100, Math.round((count / user.target) * 100))}%` }} 
+              />
+            </div>
+          </Card>
+        )}
       </div>
       <SectionTitle>By Type</SectionTitle>
       {bt.length === 0 ? <Empty text="No activity in this range." /> : (
@@ -1468,6 +1655,9 @@ function LogisticsRow({ l, action }) {
 function SupervisorTeam({ ctx }) {
   const { user, users, types, activities, refresh, flash } = ctx;
   const [range, setRange] = useState('week');
+  const [targetModal, setTargetModal] = useState(null); // holds agent object
+  const [targetInput, setTargetInput] = useState('');
+  
   const myAgents = users.filter(u => u.role === 'agent' && u.supervisorPhone === user.phone && u.active !== false);
   const unassigned = users.filter(u => u.role === 'agent' && !u.supervisorPhone && u.active !== false);
   const rows = agentRows(myAgents, activities, types, range);
@@ -1484,6 +1674,23 @@ function SupervisorTeam({ ctx }) {
     flash(`${u.name} added to your team.`, 'green');
   };
 
+  const openTargetModal = (agentRow) => {
+    setTargetInput(agentRow.target || '');
+    setTargetModal(agentRow);
+  };
+
+  const saveTarget = async () => {
+    if (!targetModal) return;
+    const raw = await safeGet(`users:${targetModal.phone}`, true);
+    if (!raw) return;
+    const u = JSON.parse(raw);
+    u.target = Number(targetInput) || 0;
+    await saveItem(`users:${targetModal.phone}`, u, true);
+    await refresh();
+    flash(`Target updated for ${u.name}.`, 'green');
+    setTargetModal(null);
+  };
+
   return (
     <div>
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
@@ -1497,7 +1704,26 @@ function SupervisorTeam({ ctx }) {
       </div>
 
       <SectionTitle>Team Leaderboard</SectionTitle>
-      <LeaderboardTable rows={rows} />
+      <LeaderboardTable rows={rows} onSetTarget={openTargetModal} />
+
+      {targetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="font-bold text-slate-900">Set Target for {targetModal.name}</h3>
+              <button onClick={() => setTargetModal(null)} className="p-2 -mr-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200/50 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <Field label="Registration Target">
+                <TextInput type="number" placeholder="e.g. 50" value={targetInput} onChange={e => setTargetInput(e.target.value)} />
+              </Field>
+              <Btn onClick={saveTarget} full icon={Target}>Save Target</Btn>
+            </div>
+          </div>
+        </div>
+      )}
 
       {unassigned.length > 0 && (
         <div className="mt-8">
@@ -1519,7 +1745,7 @@ function SupervisorTeam({ ctx }) {
   );
 }
 
-function LeaderboardTable({ rows, nameLabel = 'Name', valueLabel = 'Registrations' }) {
+function LeaderboardTable({ rows, nameLabel = 'Name', valueLabel = 'Registrations', onSetTarget }) {
   return (
     <Card className="overflow-hidden overflow-x-auto no-scrollbar shadow-sm">
       <table className="w-full text-sm">
@@ -1527,20 +1753,41 @@ function LeaderboardTable({ rows, nameLabel = 'Name', valueLabel = 'Registration
           <tr className="bg-slate-900 border-b border-slate-800">
             <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest font-bold text-slate-300">#</th>
             <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest font-bold text-slate-300">{nameLabel}</th>
-            <th className="px-4 py-3 text-right text-[11px] uppercase tracking-widest font-bold text-slate-300">{valueLabel}</th>
+            <th className="px-4 py-3 text-right text-[11px] uppercase tracking-widest font-bold text-slate-300">Progress</th>
             <th className="px-4 py-3 text-right text-[11px] uppercase tracking-widest font-bold text-slate-300">Value</th>
+            {onSetTarget && <th className="px-4 py-3 text-right text-[11px] uppercase tracking-widest font-bold text-slate-300">Target</th>}
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={r.id || i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors group">
-              <td className="px-4 py-3 font-medium text-slate-400">{i + 1}</td>
-              <td className="px-4 py-3 font-bold text-slate-900">{r.name}</td>
-              <td className="px-4 py-3 text-right font-medium text-slate-600 bg-slate-50/50 group-hover:bg-slate-100/50 transition-colors">{r.count}</td>
-              <td className="px-4 py-3 text-right font-bold text-slate-900">{fmtNaira(r.value)}</td>
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={4}><Empty text="No entries yet." /></td></tr>}
+          {rows.map((r, i) => {
+            const targetStr = r.target > 0 ? ` / ${r.target}` : '';
+            const pct = r.target > 0 ? Math.min(100, Math.round((r.count / r.target) * 100)) : 0;
+            return (
+              <tr key={r.id || i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors group">
+                <td className="px-4 py-3 font-medium text-slate-400">{i + 1}</td>
+                <td className="px-4 py-3 font-bold text-slate-900">{r.name}</td>
+                <td className="px-4 py-3 text-right min-w-[140px]">
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="font-medium text-slate-600 bg-slate-50/50 px-2 py-0.5 rounded text-xs group-hover:bg-slate-100/50 transition-colors">{r.count}{targetStr}</span>
+                    {r.target > 0 && (
+                      <div className="w-24 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                        <div className={`h-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-3 text-right font-bold text-slate-900">{fmtNaira(r.value)}</td>
+                {onSetTarget && (
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => onSetTarget(r)} className="text-[10px] uppercase font-bold tracking-wider text-slate-500 hover:text-amber-600 transition-colors bg-slate-100 hover:bg-amber-100 px-2.5 py-1.5 rounded-lg flex items-center gap-1 ml-auto">
+                      <Target size={12} /> {r.target > 0 ? 'Edit' : 'Set'}
+                    </button>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+          {rows.length === 0 && <tr><td colSpan={onSetTarget ? 5 : 4}><Empty text="No entries yet." /></td></tr>}
         </tbody>
       </table>
     </Card>
