@@ -692,16 +692,16 @@ function LiveVerification({ ctx }) {
   const [result, setResult] = useState(null);
 
   const SERVICES = [
-    { id: 'nin-verification', provider: 'fasterverify', label: 'NIN Verification', desc: 'Verify via 11-digit NIN', icon: Fingerprint, base: 150, endpoint: 'nin/verify', method: 'POST' },
-    { id: 'nin-phone', provider: 'fasterverify', label: 'NIN by Phone', desc: 'Search NIN using phone number', icon: Smartphone, base: 160, endpoint: 'nin/phone', method: 'POST' },
-    { id: 'nin-tracking', provider: 'fasterverify', label: 'NIN Tracking ID', desc: 'Search using slip tracking ID', icon: Navigation, base: 200, endpoint: 'personalization/submit', method: 'POST' },
-    { id: 'nin-demography', provider: 'fasterverify', label: 'NIN Demography', desc: 'Search by exact demographics', icon: Users, base: 160, endpoint: 'nin/demographic', method: 'POST' },
-    { id: 'bvn-verification', provider: 'fasterverify', label: 'BVN Verification', desc: 'Verify via 11-digit BVN', icon: ShieldCheck, base: 150, endpoint: 'bvn/verify-basic', method: 'POST' },
-    { id: 'bvn-phone', provider: 'fasterverify', label: 'BVN by Phone', desc: 'Search BVN using phone number', icon: Smartphone, base: 150, endpoint: 'bvn/verify-advance', method: 'POST' },
-    { id: 'ipe-clearance', provider: 'fasterverify', label: 'IPE Clearance', desc: 'Submit IPE tracking ID', icon: FileCheck, base: 500, endpoint: 'ipe/clearance', method: 'POST' },
-    { id: 'ipe-status', provider: 'fasterverify', label: 'IPE Status', desc: 'Check IPE clearance status', icon: Activity, base: 0, endpoint: 'ipe/status', method: 'POST' },
-    { id: 'nin-validation', provider: 'fasterverify', label: 'NIN Validation', desc: 'Submit NIN for validation', icon: ShieldCheck, base: 500, endpoint: 'nin/validation', method: 'POST' },
-    { id: 'nin-validation-status', provider: 'fasterverify', label: 'NIN Validation Status', desc: 'Check validation status', icon: Activity, base: 0, endpoint: 'nin/validation-status', method: 'POST' },
+    { id: 'nin-verification', provider: 'fasterverify', label: 'NIN Verification', desc: 'Verify via 11-digit NIN', icon: Fingerprint, price: 500, endpoint: 'nin/verify', method: 'POST' },
+    { id: 'nin-phone', provider: 'fasterverify', label: 'NIN by Phone', desc: 'Search NIN using phone number', icon: Smartphone, price: 500, endpoint: 'nin/phone', method: 'POST' },
+    { id: 'nin-tracking', provider: 'fasterverify', label: 'NIN Tracking ID', desc: 'Search using slip tracking ID', icon: Navigation, price: 600, endpoint: 'personalization/submit', method: 'POST' },
+    { id: 'nin-demography', provider: 'fasterverify', label: 'NIN Demography', desc: 'Search by exact demographics', icon: Users, price: 500, endpoint: 'nin/demographic', method: 'POST' },
+    { id: 'bvn-verification', provider: 'fasterverify', label: 'BVN Verification', desc: 'Verify via 11-digit BVN', icon: ShieldCheck, price: 500, endpoint: 'bvn/verify-basic', method: 'POST' },
+    { id: 'bvn-phone', provider: 'fasterverify', label: 'BVN by Phone', desc: 'Search BVN using phone number', icon: Smartphone, price: 500, endpoint: 'bvn/verify-advance', method: 'POST' },
+    { id: 'ipe-clearance', provider: 'fasterverify', label: 'IPE Clearance', desc: 'Submit IPE tracking ID', icon: FileCheck, price: 1500, endpoint: 'ipe/clearance', method: 'POST' },
+    { id: 'ipe-status', provider: 'fasterverify', label: 'IPE Status', desc: 'Check IPE clearance status', icon: Activity, price: 0, endpoint: 'ipe/status', method: 'POST' },
+    { id: 'nin-validation', provider: 'fasterverify', label: 'NIN Validation', desc: 'Submit NIN for validation', icon: ShieldCheck, price: 1500, endpoint: 'nin/validation', method: 'POST' },
+    { id: 'nin-validation-status', provider: 'fasterverify', label: 'NIN Validation Status', desc: 'Check validation status', icon: Activity, price: 0, endpoint: 'nin/validation-status', method: 'POST' },
   ];
 
   const handleSelectService = (s) => {
@@ -749,7 +749,7 @@ function LiveVerification({ ctx }) {
 
     try {
       let res;
-      const cost = selectedService.base * 3;
+      const cost = selectedService.price;
       if (cost > 0) {
         if ((user.balance || 0) < cost) {
           flash(`Insufficient funds. Please top up your wallet (Requires ₦${fmtNaira(cost)}).`, 'red');
@@ -910,53 +910,6 @@ function LiveVerification({ ctx }) {
         {renderSlipTypeSelect()}
       </>;
     }
-    if (s.id === 'nin-modification-status') {
-      return <Field label="Reference ID"><TextInput value={formData.reference_id || ''} onChange={e => handleChange('reference_id', e.target.value)} placeholder="e.g. NM_API_..."/></Field>;
-    }
-    if (s.id === 'nin_name_modification') {
-      return <>
-        <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Current Surname"><TextInput value={formData.surname || ''} onChange={e => handleChange('surname', e.target.value)} /></Field>
-          <Field label="Current Firstname"><TextInput value={formData.firstname || ''} onChange={e => handleChange('firstname', e.target.value)} /></Field>
-        </div>
-        <Field label="Phone Number"><TextInput value={formData.phone_number || ''} onChange={e => handleChange('phone_number', e.target.value)} /></Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="New Surname"><TextInput value={formData.new_surname || ''} onChange={e => handleChange('new_surname', e.target.value)} /></Field>
-          <Field label="New Firstname"><TextInput value={formData.new_firstname || ''} onChange={e => handleChange('new_firstname', e.target.value)} /></Field>
-        </div>
-        <Field label="New Middlename (optional)"><TextInput value={formData.new_middlename || ''} onChange={e => handleChange('new_middlename', e.target.value)} /></Field>
-      </>;
-    }
-    if (s.id === 'nin_phone_modification') {
-      return <>
-        <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>
-        <div className="grid grid-cols-3 gap-4">
-          <Field label="Current Surname"><TextInput value={formData.surname || ''} onChange={e => handleChange('surname', e.target.value)} /></Field>
-          <Field label="Current Firstname"><TextInput value={formData.firstname || ''} onChange={e => handleChange('firstname', e.target.value)} /></Field>
-          <Field label="Current Middlename"><TextInput value={formData.middlename || ''} onChange={e => handleChange('middlename', e.target.value)} /></Field>
-        </div>
-        <Field label="New Phone Number"><TextInput value={formData.new_phone_number || ''} onChange={e => handleChange('new_phone_number', e.target.value)} /></Field>
-      </>;
-    }
-    if (s.id === 'nin_address_modification') {
-      return <>
-        <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>
-        <div className="grid grid-cols-3 gap-4">
-          <Field label="Current Surname"><TextInput value={formData.surname || ''} onChange={e => handleChange('surname', e.target.value)} /></Field>
-          <Field label="Current Firstname"><TextInput value={formData.firstname || ''} onChange={e => handleChange('firstname', e.target.value)} /></Field>
-          <Field label="Current Middlename"><TextInput value={formData.middlename || ''} onChange={e => handleChange('middlename', e.target.value)} /></Field>
-        </div>
-        <Field label="Phone Number"><TextInput value={formData.phone_number || ''} onChange={e => handleChange('phone_number', e.target.value)} /></Field>
-        <Field label="New Address"><TextInput value={formData.new_address || ''} onChange={e => handleChange('new_address', e.target.value)} /></Field>
-      </>;
-    }
-    if (s.id === 'nin_validation') {
-      return <>
-        <Field label="11-Digit NIN"><TextInput value={formData.nin_digits || ''} onChange={e => handleChange('nin_digits', e.target.value)} /></Field>
-        <Field label="Date of Birth (YYYY-MM-DD)"><TextInput type="date" value={formData.date_of_birth || ''} onChange={e => handleChange('date_of_birth', e.target.value)} /></Field>
-      </>;
-    }
     return null;
   };
 
@@ -979,7 +932,7 @@ function LiveVerification({ ctx }) {
                 </div>
                 <div className="text-right">
                   <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Fee</div>
-                  <div className="font-black text-slate-900">{s.base === 0 ? 'Free' : fmtNaira(s.base * 3)}</div>
+                  <div className="font-black text-slate-900">{s.price === 0 ? 'Free' : fmtNaira(s.price)}</div>
                 </div>
               </div>
               <h3 className="font-bold text-slate-900 text-lg mb-1">{s.label}</h3>
@@ -996,7 +949,7 @@ function LiveVerification({ ctx }) {
               </div>
               <div>
                 <h3 className="text-xl font-black text-slate-900">{selectedService.label}</h3>
-                <p className="text-sm font-medium text-slate-500">{selectedService.desc} • {selectedService.base === 0 ? 'Free Service' : `Total Cost: ${fmtNaira(selectedService.base * 3)}`}</p>
+                <p className="text-sm font-medium text-slate-500">{selectedService.desc} • {selectedService.price === 0 ? 'Free Service' : `Total Cost: ${fmtNaira(selectedService.price)}`}</p>
               </div>
             </div>
             
