@@ -277,15 +277,25 @@ function agentRows(agents, activities, types, range) {
     const own = activities.filter(x => x.agentPhone === a.phone && isInRange(x.date, range));
     const count = own.reduce((s, x) => s + Number(x.count || 0), 0);
     const value = own.reduce((s, x) => s + Number(x.count || 0) * (pm[x.typeId] || 0), 0);
-    return { id: a.phone, name: a.name, phone: a.phone, count, value, target: a.target || 0 };
+    
+    let totalTarget = 0;
+    let targetObj = {};
+    if (a.target && typeof a.target === 'object') {
+      targetObj = a.target;
+      totalTarget = Object.values(a.target).reduce((sum, val) => sum + (Number(val) || 0), 0);
+    } else if (typeof a.target === 'number') {
+      totalTarget = a.target; // backward compatibility
+    }
+    
+    return { id: a.phone, name: a.name, phone: a.phone, count, value, target: totalTarget, targetObj };
   }).sort((a, b) => b.count - a.count);
 }
 
 function breakdown(activities, types, range) {
   const map = {};
-  types.forEach(t => { map[t.id] = { name: t.name, count: 0 }; });
+  types.forEach(t => { map[t.id] = { id: t.id, name: t.name, count: 0 }; });
   activities.filter(x => isInRange(x.date, range)).forEach(x => {
-    if (!map[x.typeId]) map[x.typeId] = { name: x.typeName || x.typeId, count: 0 };
+    if (!map[x.typeId]) map[x.typeId] = { id: x.typeId, name: x.typeName || x.typeId, count: 0 };
     map[x.typeId].count += Number(x.count || 0);
   });
   return Object.values(map).filter(m => m.count > 0).sort((a, b) => b.count - a.count);
@@ -367,10 +377,21 @@ function ReportsView({ ctx }) {
 
     // Format data for CSV readability
     const formatted = filtered.map(row => {
+      const phone = row.userPhone || row.agentPhone || row.requesterPhone || 'N/A';
+      const userRec = users.find(u => u.phone === phone);
+      let supervisorName = 'N/A';
+      if (userRec && userRec.supervisorPhone) {
+        const supRec = users.find(u => u.phone === userRec.supervisorPhone);
+        if (supRec) supervisorName = supRec.name;
+      }
+
       const base = {
         Date: new Date(row.date || row.createdAt).toLocaleString(),
-        User_Phone: row.userPhone || row.agentPhone || row.requesterPhone || 'N/A',
+        User_Phone: phone,
+        Agent_Name: userRec ? userRec.name : 'Unknown',
+        Supervisor_Name: supervisorName,
       };
+      
       if (reportType === 'transactions') {
         return { ...base, Service: row.serviceName, Cost: row.cost, Status: row.status, Details: row.detail || row.desc };
       }
@@ -1537,6 +1558,13 @@ function AgentStats({ ctx }) {
   const value = mine.reduce((s, a) => s + Number(a.count || 0) * (pm[a.typeId] || 0), 0);
   const bt = breakdown(mine.map(a => ({ ...a })), types, 'all');
 
+  let totalTarget = 0;
+  if (user.target && typeof user.target === 'object') {
+    totalTarget = Object.values(user.target).reduce((sum, val) => sum + (Number(val) || 0), 0);
+  } else if (typeof user.target === 'number') {
+    totalTarget = user.target;
+  }
+
   return (
     <div>
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
@@ -1547,16 +1575,16 @@ function AgentStats({ ctx }) {
         <StatTile label="Registrations" value={count} icon={ClipboardList} />
         <StatTile label="Value Generated" value={fmtNaira(value)} icon={CircleDollarSign} />
         
-        {user.target > 0 && (
+        {totalTarget > 0 && (
           <Card className="col-span-2 p-5 flex flex-col justify-center">
             <div className="flex justify-between mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Target Progress</span>
-              <span className="text-xs font-bold text-slate-900">{count} / {user.target}</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-500">Overall Target Progress</span>
+              <span className="text-xs font-bold text-slate-900">{count} / {totalTarget}</span>
             </div>
             <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
               <div 
-                className={`h-full ${count >= user.target ? 'bg-emerald-500' : 'bg-amber-400'}`} 
-                style={{ width: `${Math.min(100, Math.round((count / user.target) * 100))}%` }} 
+                className={`h-full ${count >= totalTarget ? 'bg-emerald-500' : 'bg-amber-400'}`} 
+                style={{ width: `${Math.min(100, Math.round((count / totalTarget) * 100))}%` }} 
               />
             </div>
           </Card>
@@ -1565,12 +1593,29 @@ function AgentStats({ ctx }) {
       <SectionTitle>By Type</SectionTitle>
       {bt.length === 0 ? <Empty text="No activity in this range." /> : (
         <Card className="p-2 space-y-1">
-          {bt.map(b => (
-            <div key={b.name} className="flex items-center justify-between px-4 py-3 rounded-lg hover:bg-slate-50 transition-colors">
-              <span className="font-semibold text-slate-700">{b.name}</span>
-              <span className="font-bold text-slate-900 bg-slate-100 px-3 py-1 rounded-md">{b.count}</span>
-            </div>
-          ))}
+          {bt.map(b => {
+            const t = user.target && typeof user.target === 'object' ? (user.target[b.id] || 0) : 0;
+            const pct = t > 0 ? Math.min(100, Math.round((b.count / t) * 100)) : 0;
+            return (
+              <div key={b.name} className="flex flex-col px-4 py-3 rounded-lg hover:bg-slate-50 transition-colors gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">{b.name}</span>
+                  <div className="flex items-center gap-2">
+                    {t > 0 && <span className="text-xs font-medium text-slate-400">Target: {t}</span>}
+                    <span className="font-bold text-slate-900 bg-slate-100 px-3 py-1 rounded-md">{b.count}</span>
+                  </div>
+                </div>
+                {t > 0 && (
+                  <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden mt-1">
+                    <div 
+                      className={`h-full ${pct >= 100 ? 'bg-emerald-500' : 'bg-amber-400'}`} 
+                      style={{ width: `${pct}%` }} 
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </Card>
       )}
     </div>
@@ -1656,7 +1701,7 @@ function SupervisorTeam({ ctx }) {
   const { user, users, types, activities, refresh, flash } = ctx;
   const [range, setRange] = useState('week');
   const [targetModal, setTargetModal] = useState(null); // holds agent object
-  const [targetInput, setTargetInput] = useState('');
+  const [targetInput, setTargetInput] = useState({});
   
   const myAgents = users.filter(u => u.role === 'agent' && u.supervisorPhone === user.phone && u.active !== false);
   const unassigned = users.filter(u => u.role === 'agent' && !u.supervisorPhone && u.active !== false);
@@ -1675,7 +1720,7 @@ function SupervisorTeam({ ctx }) {
   };
 
   const openTargetModal = (agentRow) => {
-    setTargetInput(agentRow.target || '');
+    setTargetInput(agentRow.targetObj || {});
     setTargetModal(agentRow);
   };
 
@@ -1684,10 +1729,10 @@ function SupervisorTeam({ ctx }) {
     const raw = await safeGet(`users:${targetModal.phone}`, true);
     if (!raw) return;
     const u = JSON.parse(raw);
-    u.target = Number(targetInput) || 0;
+    u.target = targetInput;
     await saveItem(`users:${targetModal.phone}`, u, true);
     await refresh();
-    flash(`Target updated for ${u.name}.`, 'green');
+    flash(`Targets updated for ${u.name}.`, 'green');
     setTargetModal(null);
   };
 
@@ -1708,18 +1753,32 @@ function SupervisorTeam({ ctx }) {
 
       {targetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-              <h3 className="font-bold text-slate-900">Set Target for {targetModal.name}</h3>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+            <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50 shrink-0">
+              <h3 className="font-bold text-slate-900">Set Targets for {targetModal.name}</h3>
               <button onClick={() => setTargetModal(null)} className="p-2 -mr-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200/50 transition-colors">
                 <X size={18} />
               </button>
             </div>
-            <div className="p-5 space-y-4">
-              <Field label="Registration Target">
-                <TextInput type="number" placeholder="e.g. 50" value={targetInput} onChange={e => setTargetInput(e.target.value)} />
-              </Field>
-              <Btn onClick={saveTarget} full icon={Target}>Save Target</Btn>
+            <div className="p-5 overflow-y-auto space-y-4">
+              <p className="text-xs font-medium text-slate-500 mb-2">Set monthly/weekly quotas for each service:</p>
+              {types.filter(t => t.active).map(t => (
+                <div key={t.id} className="flex items-center justify-between gap-4">
+                  <label className="text-sm font-semibold text-slate-700 w-1/2 truncate" title={t.name}>{t.name}</label>
+                  <div className="w-1/2">
+                    <TextInput 
+                      type="number" 
+                      placeholder="0" 
+                      value={targetInput[t.id] || ''} 
+                      onChange={e => setTargetInput(prev => ({ ...prev, [t.id]: Number(e.target.value) || 0 }))} 
+                      className="py-1.5"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="p-5 border-t border-slate-100 bg-slate-50 shrink-0">
+              <Btn onClick={saveTarget} full icon={Target}>Save Targets</Btn>
             </div>
           </div>
         </div>
