@@ -1,10 +1,21 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { usePaystackPayment } from 'react-paystack';
+import { createClient } from '@supabase/supabase-js';
+import * as pdfjsLib from 'pdfjs-dist';
+
+// Use a CDN for the worker to avoid Vite build configuration issues
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 import {
   ClipboardList, Users, Printer, ShieldCheck, Boxes, LogOut, Plus, Minus,
   Check, X, Package, TrendingUp, User, ChevronRight, AlertCircle,
   CircleDollarSign, Crown, Home, UserPlus, Trash2, Loader2, RefreshCw,
   ArrowRight, Eye, EyeOff, CheckCircle2, XCircle, Clock, Settings,
-  Search, FileText, KeyRound, Wallet
+  Search, FileText, KeyRound, Wallet, Smartphone, Fingerprint, MapPin, 
+  Edit, Activity, Navigation, FileCheck, Copy
 } from 'lucide-react';
 
 /* ---------------------------------- config ---------------------------------- */
@@ -61,13 +72,12 @@ function isInRange(dateStr, range) {
 
 async function safeGet(key, shared) {
   try {
-    let r;
-    if (window.storage) {
-      r = await window.storage.get(key, shared);
-    } else {
-      r = localStorage.getItem(key);
+    if (supabase) {
+      const { data, error } = await supabase.from('kv_store').select('value').eq('key', key).maybeSingle();
+      if (!error && data) return typeof data.value === 'string' ? data.value : data.value;
+      return null;
     }
-    // Handle both raw strings and wrapped objects from the storage API safely
+    let r = window.storage ? await window.storage.get(key, shared) : localStorage.getItem(key);
     if (r && typeof r === 'object' && 'value' in r) return r.value;
     return r;
   } catch (e) { return null; }
@@ -76,8 +86,20 @@ async function safeGet(key, shared) {
 async function listAll(prefix, shared) {
   try {
     const out = [];
+    if (supabase) {
+      const { data, error } = await supabase.from('kv_store').select('value').like('key', `${prefix}%`);
+      if (!error && data) {
+        for (const row of data) {
+          try { 
+            const parsed = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+            out.push(parsed);
+          } catch(e) {}
+        }
+        return out;
+      }
+    }
+    
     let keys = [];
-
     if (window.storage) {
       const res = await window.storage.list(prefix, shared);
       if (res && res.keys) keys = res.keys;
@@ -87,7 +109,6 @@ async function listAll(prefix, shared) {
         if (k && k.startsWith(prefix)) keys.push(k);
       }
     }
-
     for (const k of keys) {
       const v = await safeGet(k, shared);
       if (v) {
@@ -101,6 +122,11 @@ async function listAll(prefix, shared) {
 async function saveItem(key, obj, shared) {
   try {
     const val = typeof obj === 'string' ? obj : JSON.stringify(obj);
+    if (supabase) {
+      const { error } = await supabase.from('kv_store').upsert({ key, value: val });
+      if (!error) return true;
+      console.error('Supabase upsert error', error);
+    }
     if (window.storage) {
       await window.storage.set(key, val, shared);
     } else {
@@ -112,6 +138,10 @@ async function saveItem(key, obj, shared) {
 
 async function deleteItem(key, shared) {
   try {
+    if (supabase) {
+      const { error } = await supabase.from('kv_store').delete().eq('key', key);
+      if (!error) return true;
+    }
     if (window.storage) {
       await window.storage.delete(key, shared);
     } else {
@@ -123,46 +153,25 @@ async function deleteItem(key, shared) {
 
 /* --------------------------------- primitives -------------------------------- */
 
-const COLORS = {
-  ink: '#182B3A', inkSoft: '#54677A', paper: '#EFE9DA', surface: '#FBF9F2',
-  amber: '#E8A23A', amberDark: '#B87F1E', green: '#2F6B4F', greenSoft: '#E4EEE8',
-  red: '#A93226', redSoft: '#F3E1DE', line: '#D9D2BC',
-};
-
-function GlobalStyle() {
-  return (
-    <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
-      .fl-root { font-family: 'IBM Plex Sans', sans-serif; color: ${COLORS.ink}; }
-      .fl-display { font-family: 'Barlow Condensed', sans-serif; letter-spacing: 0.02em; }
-      .fl-mono { font-family: 'IBM Plex Mono', monospace; }
-      .fl-stub { background-image: radial-gradient(circle at 3px 6px, ${COLORS.paper} 2.5px, transparent 3px); background-size: 8px 14px; background-repeat: repeat-y; }
-      .fl-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
-      .fl-scroll::-webkit-scrollbar-thumb { background: ${COLORS.line}; border-radius: 4px; }
-      input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-      .fl-focus:focus { outline: 2px solid ${COLORS.amber}; outline-offset: 1px; }
-    `}</style>
-  );
-}
-
 function Btn({ children, onClick, tone = 'primary', size = 'md', full, disabled, type = 'button', icon: Icon }) {
+  const base = "inline-flex items-center justify-center gap-2 rounded-xl font-bold transition-all shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:transform-none active:scale-[0.98]";
+  
   const styles = {
-    primary: { background: COLORS.amber, color: COLORS.ink, border: `1px solid ${COLORS.amberDark}` },
-    dark: { background: COLORS.ink, color: COLORS.paper, border: `1px solid ${COLORS.ink}` },
-    ghost: { background: 'transparent', color: COLORS.ink, border: `1px solid ${COLORS.line}` },
-    green: { background: COLORS.green, color: '#fff', border: `1px solid ${COLORS.green}` },
-    red: { background: COLORS.red, color: '#fff', border: `1px solid ${COLORS.red}` },
+    primary: "bg-gradient-to-r from-amber-400 to-amber-500 text-slate-900 hover:from-amber-300 hover:to-amber-400 border border-amber-400/50 shadow-md shadow-amber-500/20 hover:shadow-amber-500/30",
+    dark: "bg-gradient-to-r from-slate-900 to-slate-800 text-white hover:from-slate-800 hover:to-slate-700 shadow-md shadow-slate-900/20",
+    ghost: "bg-white/50 hover:bg-white text-slate-700 hover:text-slate-900 border border-slate-200 shadow-sm",
+    green: "bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-white shadow-md shadow-emerald-500/20",
+    red: "bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-400 hover:to-rose-500 text-white shadow-md shadow-rose-500/20",
   };
-  const pad = size === 'sm' ? '6px 10px' : '10px 16px';
+  const sizes = {
+    sm: "px-3 py-1.5 text-xs",
+    md: "px-4 py-2.5 text-sm",
+    lg: "px-5 py-3 text-base"
+  };
+  
   return (
-    <button
-      type={type}
-      onClick={onClick}
-      disabled={disabled}
-      className={`fl-focus inline-flex items-center justify-center gap-2 rounded-md font-semibold transition-opacity ${full ? 'w-full' : ''} ${disabled ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}
-      style={{ ...styles[tone], padding: pad, fontSize: size === 'sm' ? 13 : 14 }}
-    >
-      {Icon && <Icon size={size === 'sm' ? 14 : 16} />}
+    <button type={type} onClick={onClick} disabled={disabled} className={`${base} ${styles[tone]} ${sizes[size]} ${full ? 'w-full' : ''}`}>
+      {Icon && <Icon size={size === 'sm' ? 14 : 18} className={tone === 'primary' ? 'text-slate-800' : ''} />}
       {children}
     </button>
   );
@@ -170,21 +179,21 @@ function Btn({ children, onClick, tone = 'primary', size = 'md', full, disabled,
 
 function Card({ children, className = '', style = {} }) {
   return (
-    <div className={`rounded-lg ${className}`} style={{ background: COLORS.surface, border: `1px solid ${COLORS.line}`, ...style }}>
+    <div className={`bg-white/80 backdrop-blur-xl border border-white/60 rounded-2xl shadow-xl shadow-slate-200/40 hover:shadow-2xl transition-all duration-300 ${className}`} style={style}>
       {children}
     </div>
   );
 }
 
 function Badge({ children, tone = 'default' }) {
-  const map = {
-    default: { background: COLORS.paper, color: COLORS.inkSoft },
-    green: { background: COLORS.greenSoft, color: COLORS.green },
-    red: { background: COLORS.redSoft, color: COLORS.red },
-    amber: { background: '#FBEBD1', color: COLORS.amberDark },
+  const styles = {
+    default: "bg-slate-100 text-slate-600 border border-slate-200",
+    green: "bg-emerald-50 text-emerald-700 border border-emerald-200",
+    red: "bg-rose-50 text-rose-700 border border-rose-200",
+    amber: "bg-amber-50 text-amber-700 border border-amber-200",
   };
   return (
-    <span className="fl-mono inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium uppercase tracking-wide" style={map[tone]}>
+    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${styles[tone]}`}>
       {children}
     </span>
   );
@@ -192,10 +201,7 @@ function Badge({ children, tone = 'default' }) {
 
 function Avatar({ name, size = 40 }) {
   return (
-    <div
-      className="fl-display flex items-center justify-center rounded-full shrink-0"
-      style={{ width: size, height: size, background: COLORS.ink, color: COLORS.amber, fontSize: size * 0.4, fontWeight: 800 }}
-    >
+    <div className="flex items-center justify-center rounded-full bg-gradient-to-br from-slate-800 to-slate-900 text-amber-400 font-bold shrink-0 shadow-inner" style={{ width: size, height: size, fontSize: size * 0.4 }}>
       {initials(name)}
     </div>
   );
@@ -203,17 +209,17 @@ function Avatar({ name, size = 40 }) {
 
 function StatTile({ label, value, sub, icon: Icon, loading = false }) {
   return (
-    <Card className="flex overflow-hidden">
-      <div className="fl-stub w-2 shrink-0" style={{ background: COLORS.ink }} />
-      <div className="p-3 flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-1" style={{ color: COLORS.inkSoft }}>
-          {Icon && <Icon size={13} />}
-          <span className="text-[11px] uppercase tracking-wide font-medium truncate">{label}</span>
+    <Card className="flex overflow-hidden relative group hover:shadow-[0_8px_30px_rgb(0,0,0,0.06)] transition-shadow">
+      <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b from-amber-400 to-amber-500 opacity-80" />
+      <div className="p-4 flex-1 min-w-0 pl-5">
+        <div className="flex items-center gap-2 mb-2 text-slate-500">
+          {Icon && <Icon size={14} className="text-amber-500" />}
+          <span className="text-[11px] font-bold uppercase tracking-wider truncate">{label}</span>
         </div>
-        <div className="fl-display text-2xl font-bold leading-none truncate">
-          {loading ? <Loader2 size={20} className="animate-spin" /> : value}
+        <div className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight leading-none truncate">
+          {loading ? <Loader2 size={24} className="animate-spin text-slate-400" /> : value}
         </div>
-        {sub && <div className="text-xs mt-1 truncate" style={{ color: COLORS.inkSoft }}>{sub}</div>}
+        {sub && <div className="text-xs mt-1.5 font-medium text-slate-400 truncate">{sub}</div>}
       </div>
     </Card>
   );
@@ -221,28 +227,23 @@ function StatTile({ label, value, sub, icon: Icon, loading = false }) {
 
 function SectionTitle({ children, action }) {
   return (
-    <div className="flex items-center justify-between mb-2 mt-5 first:mt-0">
-      <h3 className="fl-display text-lg font-bold tracking-wide uppercase" style={{ color: COLORS.ink }}>{children}</h3>
+    <div className="flex items-center justify-between mb-3 mt-6 first:mt-0">
+      <h3 className="text-lg font-bold text-slate-900 tracking-tight">{children}</h3>
       {action}
     </div>
   );
 }
 
 function Empty({ text }) {
-  return <div className="text-center py-8 text-sm" style={{ color: COLORS.inkSoft }}>{text}</div>;
+  return <div className="text-center py-10 px-4 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200 text-sm font-medium text-slate-500">{text}</div>;
 }
 
 function RangeTabs({ value, onChange, options }) {
   const opts = options || [['today', 'Today'], ['week', '7 Days'], ['month', 'This Month'], ['all', 'All Time']];
   return (
-    <div className="inline-flex rounded-md overflow-hidden border" style={{ borderColor: COLORS.line }}>
+    <div className="inline-flex rounded-xl bg-slate-100/80 p-1 shadow-inner overflow-x-auto max-w-full no-scrollbar">
       {opts.map(([id, label]) => (
-        <button
-          key={id}
-          onClick={() => onChange(id)}
-          className="fl-focus px-3 py-1.5 text-xs font-semibold"
-          style={{ background: value === id ? COLORS.ink : COLORS.surface, color: value === id ? COLORS.paper : COLORS.inkSoft }}
-        >
+        <button key={id} onClick={() => onChange(id)} className={`px-4 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap ${value === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}>
           {label}
         </button>
       ))}
@@ -252,19 +253,18 @@ function RangeTabs({ value, onChange, options }) {
 
 function Field({ label, children }) {
   return (
-    <label className="block mb-3">
-      <span className="block text-xs font-semibold uppercase tracking-wide mb-1" style={{ color: COLORS.inkSoft }}>{label}</span>
+    <label className="block mb-4">
+      <span className="block text-xs font-bold text-slate-700 mb-1.5">{label}</span>
       {children}
     </label>
   );
 }
 
-const inputStyle = { border: `1px solid ${COLORS.line}`, background: '#fff', color: COLORS.ink };
 function TextInput(props) {
-  return <input {...props} className={`fl-focus w-full rounded-md px-3 py-2 text-sm ${props.className || ''}`} style={{ ...inputStyle, ...(props.style || {}) }} />;
+  return <input {...props} className={`w-full px-4 py-2.5 bg-white/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium placeholder:font-normal placeholder:text-slate-400 ${props.className || ''}`} />;
 }
 function Select(props) {
-  return <select {...props} className={`fl-focus w-full rounded-md px-3 py-2 text-sm ${props.className || ''}`} style={{ ...inputStyle, ...(props.style || {}) }} />;
+  return <select {...props} className={`w-full px-4 py-2.5 bg-white/70 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium ${props.className || ''}`} />;
 }
 
 /* --------------------------------- aggregation --------------------------------- */
@@ -300,6 +300,7 @@ export default function App() {
   const [types, setTypes] = useState(DEFAULT_TYPES);
   const [activities, setActivities] = useState([]);
   const [logistics, setLogistics] = useState([]);
+  const [storeItems, setStoreItems] = useState(['NIN Capture Forms', 'SIM Starter Packs']);
   const [toast, setToast] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -310,17 +311,22 @@ export default function App() {
 
   const loadAll = useCallback(async () => {
     setRefreshing(true);
-    const [u, a, l, t] = await Promise.all([
+    const [u, a, l, t, si] = await Promise.all([
       listAll('users:', true),
       listAll('activities:', true),
       listAll('logistics:', true),
       safeGet('activity_types', true),
+      safeGet('store_items', true)
     ]);
     setUsers(u);
     setActivities(a);
     setLogistics(l);
     if (t) { try { setTypes(JSON.parse(t)); } catch (e) {} }
     else { await saveItem('activity_types', DEFAULT_TYPES, true); setTypes(DEFAULT_TYPES); }
+    
+    if (si) { try { setStoreItems(JSON.parse(si)); } catch (e) {} }
+    else { await saveItem('store_items', JSON.stringify(['NIN Capture Forms', 'SIM Starter Packs']), true); setStoreItems(['NIN Capture Forms', 'SIM Starter Packs']); }
+    
     setRefreshing(false);
   }, []);
 
@@ -356,7 +362,7 @@ export default function App() {
     const newUser = {
       phone: data.phone, name: data.name, pin: data.pin, role: data.role,
       supervisorPhone: data.role === 'agent' ? (data.supervisorPhone || null) : undefined,
-      active: true, createdAt: new Date().toISOString(),
+      active: true, createdAt: new Date().toISOString(), balance: 0,
     };
     await saveItem(`users:${data.phone}`, newUser, true);
     setUser(newUser);
@@ -369,19 +375,21 @@ export default function App() {
 
   if (booting) {
     return (
-      <div className="fl-root flex items-center justify-center min-h-[500px]" style={{ background: COLORS.paper }}>
-        <GlobalStyle />
-        <Loader2 className="animate-spin" size={28} style={{ color: COLORS.ink }} />
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center font-sans">
+        <Loader2 className="animate-spin text-amber-500" size={32} />
       </div>
     );
   }
 
   return (
-    <div className="fl-root min-h-[600px]" style={{ background: COLORS.paper }}>
-      <GlobalStyle />
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-amber-200">
       {toast && (
-        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-md shadow-lg text-sm font-medium"
-          style={{ background: toast.tone === 'red' ? COLORS.red : toast.tone === 'green' ? COLORS.green : COLORS.ink, color: '#fff' }}>
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-sm font-bold flex items-center gap-2 transition-all transform animate-in fade-in slide-in-from-top-4 backdrop-blur-md border ${
+            toast.tone === 'red' ? 'bg-rose-500/90 text-white border-rose-600/50' : 
+            toast.tone === 'green' ? 'bg-emerald-500/90 text-white border-emerald-600/50' : 
+            'bg-slate-900/90 text-white border-slate-800'
+          }`}>
+          {toast.tone === 'red' ? <XCircle size={16} /> : toast.tone === 'green' ? <CheckCircle2 size={16} /> : null}
           {toast.msg}
         </div>
       )}
@@ -390,7 +398,7 @@ export default function App() {
       ) : (
         <Dashboard
           user={user} setUser={setUser} users={users} types={types} activities={activities}
-          logistics={logistics} onLogout={logout} refresh={loadAll} refreshing={refreshing} flash={flash}
+          logistics={logistics} storeItems={storeItems} onLogout={logout} refresh={loadAll} refreshing={refreshing} flash={flash}
         />
       )}
     </div>
@@ -434,91 +442,134 @@ function AuthScreen({ onLogin, onSignup, users }) {
   };
 
   return (
-    <div className="min-h-[600px] flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        <div className="flex items-center gap-3 mb-6 justify-center">
-          <div className="fl-display px-3 py-1 rounded" style={{ background: COLORS.ink, color: COLORS.amber, fontWeight: 800, fontSize: 22 }}>FL</div>
-          <div>
-            <div className="fl-display text-xl font-bold tracking-wide" style={{ color: COLORS.ink }}>FIELD LEDGER</div>
-            <div className="text-xs" style={{ color: COLORS.inkSoft }}>Registration &amp; agent performance tracker</div>
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 w-full absolute top-0 left-0">
+      {/* Top Navigation Bar */}
+      <header className="w-full bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex justify-between items-center z-10">
+        <div className="flex items-center space-x-3">
+          <div className="w-10 h-10 bg-slate-900 text-white flex items-center justify-center rounded-full font-bold text-xl tracking-tighter shadow-sm">
+            FL
+          </div>
+          <div className="text-left hidden sm:block">
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-none">FIELD LEDGER</h1>
+            <p className="text-xs text-slate-500 mt-1 font-medium">Registration & agent performance tracker</p>
           </div>
         </div>
+        <div className="space-x-2 sm:space-x-4 flex">
+          <button onClick={() => { setMode('signup'); setErr(''); }} className={`px-4 py-2 text-sm font-semibold transition-colors ${mode === 'signup' ? 'text-amber-600' : 'text-slate-600 hover:text-slate-900'}`}>Register</button>
+          <button onClick={() => { setMode('login'); setErr(''); }} className={`px-5 py-2 text-sm font-semibold rounded-lg transition-all shadow-md ${mode === 'login' ? 'bg-slate-900 text-white hover:bg-slate-800' : 'bg-white text-slate-900 border border-slate-200 hover:bg-slate-50'}`}>Log In</button>
+        </div>
+      </header>
 
-        <Card className="overflow-hidden">
-          <div className="flex overflow-hidden fl-stub" style={{ background: COLORS.ink }}>
-            <div className="w-2 shrink-0" />
-            <div className="flex flex-1">
-              <button onClick={() => { setMode('login'); setErr(''); }} className="fl-focus flex-1 py-3 text-sm font-semibold"
-                style={{ color: mode === 'login' ? COLORS.amber : COLORS.paper, opacity: mode === 'login' ? 1 : 0.6 }}>LOG IN</button>
-              <button onClick={() => { setMode('signup'); setErr(''); }} className="fl-focus flex-1 py-3 text-sm font-semibold"
-                style={{ color: mode === 'signup' ? COLORS.amber : COLORS.paper, opacity: mode === 'signup' ? 1 : 0.6 }}>REGISTER</button>
-            </div>
-          </div>
+      {/* Main Glassmorphism Container */}
+      <main className="flex-grow flex items-center justify-center p-4 sm:p-6 relative">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 sm:w-96 sm:h-96 bg-amber-100 rounded-full blur-3xl opacity-50 pointer-events-none"></div>
+        
+        <div className="w-full max-w-md bg-white/70 backdrop-blur-xl border border-white/40 rounded-3xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] p-6 sm:p-8 relative z-10 overflow-y-auto max-h-[85vh] fl-scroll">
+          <h2 className="text-2xl font-bold text-slate-900 text-center mb-6 tracking-tight">
+            {mode === 'login' ? 'Log In to Field Ledger' : 'Create an Account'}
+          </h2>
 
-          <div className="p-5">
-            {mode === 'login' ? (
-              <form onSubmit={doLogin}>
-                <Field label="Phone Number">
-                  <TextInput value={phone} onChange={e => setPhone(e.target.value)} placeholder="080..." inputMode="tel" />
-                </Field>
-                <Field label="PIN">
-                  <div className="relative">
-                    <TextInput type={showPin ? 'text' : 'password'} value={pin} onChange={e => setPin(e.target.value)} placeholder="••••" inputMode="numeric" />
-                    <button type="button" onClick={() => setShowPin(s => !s)} className="absolute right-2 top-1/2 -translate-y-1/2" style={{ color: COLORS.inkSoft }}>
-                      {showPin ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </button>
-                  </div>
-                </Field>
-                {err && <div className="flex items-center gap-1.5 text-sm mb-3" style={{ color: COLORS.red }}><AlertCircle size={14} />{err}</div>}
-                <Btn type="submit" full disabled={busy} icon={busy ? Loader2 : ArrowRight}>{busy ? 'Checking…' : 'Log In'}</Btn>
-              </form>
-            ) : (
-              <form onSubmit={doSignup}>
-                <Field label="Full Name"><TextInput value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Chidi Okafor" /></Field>
-                <Field label="Phone Number"><TextInput value={phone} onChange={e => setPhone(e.target.value)} placeholder="080..." inputMode="tel" /></Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="PIN (4–6 digits)"><TextInput type="password" value={pin} onChange={e => setPin(e.target.value)} inputMode="numeric" /></Field>
-                  <Field label="Confirm PIN"><TextInput type="password" value={confirmPin} onChange={e => setConfirmPin(e.target.value)} inputMode="numeric" /></Field>
+          {mode === 'login' ? (
+            <form className="flex flex-col space-y-5" onSubmit={doLogin}>
+              <div className="flex flex-col items-start w-full">
+                <label className="text-sm font-semibold text-slate-700 mb-2">Phone Number</label>
+                <div className="relative w-full">
+                  <input 
+                    type="tel" 
+                    value={phone} onChange={e => setPhone(e.target.value)}
+                    placeholder="080..." 
+                    className="w-full px-4 py-3 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium placeholder:font-normal" 
+                  />
                 </div>
+              </div>
 
-                <span className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: COLORS.inkSoft }}>Your Role</span>
-                <div className="grid grid-cols-2 gap-2 mb-3">
-                  {ROLES.map(r => (
-                    <button type="button" key={r.id} onClick={() => setRole(r.id)}
-                      className="fl-focus text-left p-2.5 rounded-md border"
-                      style={{ borderColor: role === r.id ? COLORS.amberDark : COLORS.line, background: role === r.id ? '#FBEBD1' : '#fff' }}>
-                      <r.icon size={15} style={{ color: COLORS.ink }} />
-                      <div className="text-xs font-semibold mt-1">{r.label}</div>
-                      <div className="text-[10px]" style={{ color: COLORS.inkSoft }}>{r.desc}</div>
-                    </button>
-                  ))}
+              <div className="flex flex-col items-start w-full">
+                <label className="text-sm font-semibold text-slate-700 mb-2">PIN</label>
+                <div className="relative w-full">
+                  <input 
+                    type={showPin ? 'text' : 'password'}
+                    value={pin} onChange={e => setPin(e.target.value)}
+                    placeholder="••••" 
+                    className="w-full px-4 py-3 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium" 
+                  />
+                  <button type="button" onClick={() => setShowPin(s => !s)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                    {showPin ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
                 </div>
+              </div>
 
-                {role === 'agent' && (
-                  <Field label="Your Supervisor (optional — can be assigned later)">
-                    <Select value={supervisorPhone} onChange={e => setSupervisorPhone(e.target.value)}>
-                      <option value="">Not assigned yet</option>
-                      {supervisors.map(s => <option key={s.phone} value={s.phone}>{s.name}</option>)}
-                    </Select>
-                  </Field>
-                )}
+              {err && <div className="flex items-center gap-1.5 text-sm text-red-600 bg-red-50 p-3 rounded-lg"><AlertCircle size={16} />{err}</div>}
 
-                {ROLE_MAP[role].needsCode && (
-                  <Field label="Agency Access Code">
-                    <TextInput value={code} onChange={e => setCode(e.target.value)} placeholder="Get this from your Super Admin" />
-                  </Field>
-                )}
+              <button 
+                type="submit" 
+                disabled={busy}
+                className="w-full mt-2 bg-amber-500 hover:bg-amber-400 text-slate-900 font-bold py-3.5 rounded-xl shadow-sm transition-all flex items-center justify-center space-x-2 disabled:opacity-50"
+              >
+                <span>{busy ? 'Checking…' : 'Log In'}</span>
+                {!busy && <ArrowRight size={18} strokeWidth={2.5} />}
+              </button>
+            </form>
+          ) : (
+            <form className="flex flex-col space-y-4" onSubmit={doSignup}>
+              <div className="flex flex-col items-start w-full">
+                <label className="text-sm font-semibold text-slate-700 mb-1">Full Name</label>
+                <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Chidi Okafor" className="w-full px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium" />
+              </div>
+              
+              <div className="flex flex-col items-start w-full">
+                <label className="text-sm font-semibold text-slate-700 mb-1">Phone Number</label>
+                <input type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="080..." className="w-full px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium" />
+              </div>
 
-                {err && <div className="flex items-center gap-1.5 text-sm mb-3" style={{ color: COLORS.red }}><AlertCircle size={14} />{err}</div>}
-                <Btn type="submit" full disabled={busy} icon={busy ? Loader2 : ArrowRight}>{busy ? 'Creating account…' : 'Create Account'}</Btn>
-              </form>
-            )}
-          </div>
-        </Card>
-        <p className="text-center text-[11px] mt-4" style={{ color: COLORS.inkSoft }}>
-          Internal tool — data is shared across everyone using this app link.
-        </p>
-      </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col items-start w-full">
+                  <label className="text-sm font-semibold text-slate-700 mb-1">PIN</label>
+                  <input type="password" value={pin} onChange={e => setPin(e.target.value)} placeholder="4-6 digits" className="w-full px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium" />
+                </div>
+                <div className="flex flex-col items-start w-full">
+                  <label className="text-sm font-semibold text-slate-700 mb-1">Confirm PIN</label>
+                  <input type="password" value={confirmPin} onChange={e => setConfirmPin(e.target.value)} placeholder="4-6 digits" className="w-full px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium" />
+                </div>
+              </div>
+
+              <label className="text-sm font-semibold text-slate-700 mt-2">Your Role</label>
+              <div className="grid grid-cols-2 gap-2">
+                {ROLES.map(r => (
+                  <button type="button" key={r.id} onClick={() => setRole(r.id)}
+                    className={`text-left p-3 rounded-xl border transition-all ${role === r.id ? 'border-amber-500 bg-amber-50 shadow-sm' : 'border-slate-200 bg-white/50 hover:bg-white'}`}>
+                    <div className="flex items-center gap-2 mb-1 text-slate-900"><r.icon size={16} /><span className="text-sm font-bold">{r.label}</span></div>
+                    <div className="text-[10px] text-slate-500 leading-tight">{r.desc}</div>
+                  </button>
+                ))}
+              </div>
+
+              {role === 'agent' && (
+                <div className="flex flex-col items-start w-full mt-2">
+                  <label className="text-sm font-semibold text-slate-700 mb-1">Your Supervisor (optional)</label>
+                  <select value={supervisorPhone} onChange={e => setSupervisorPhone(e.target.value)} className="w-full px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium">
+                    <option value="">Not assigned yet</option>
+                    {supervisors.map(s => <option key={s.phone} value={s.phone}>{s.name}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {ROLE_MAP[role].needsCode && (
+                <div className="flex flex-col items-start w-full mt-2">
+                  <label className="text-sm font-semibold text-slate-700 mb-1">Agency Access Code</label>
+                  <input type="text" value={code} onChange={e => setCode(e.target.value)} placeholder="Enter code" className="w-full px-4 py-2.5 bg-white/50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500 transition-all text-slate-900 font-medium" />
+                </div>
+              )}
+
+              {err && <div className="flex items-center gap-1.5 text-sm text-red-600 bg-red-50 p-3 rounded-lg mt-2"><AlertCircle size={16} />{err}</div>}
+              
+              <button type="submit" disabled={busy} className="w-full mt-4 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-xl shadow-sm transition-all flex items-center justify-center space-x-2 disabled:opacity-50">
+                <span>{busy ? 'Creating account…' : 'Create Account'}</span>
+                {!busy && <ArrowRight size={18} strokeWidth={2.5} />}
+              </button>
+            </form>
+          )}
+        </div>
+      </main>
     </div>
   );
 }
@@ -526,86 +577,106 @@ function AuthScreen({ onLogin, onSignup, users }) {
 /* ----------------------------------- dashboard shell ----------------------------------- */
 
 const NAV = {
-  agent: [['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['stats', 'My Stats', TrendingUp], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
-  supervisor: [['team', 'My Team', Users], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
+  agent: [['log', 'Log Work', ClipboardList], ['stats', 'My Stats', TrendingUp], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
+  supervisor: [['team', 'My Team', Users], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
   ict: [['queue', 'Print Queue', Printer], ['profile', 'Profile', User]],
   store: [['requests', 'Requests', Boxes], ['profile', 'Profile', User]],
-  admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
-  super_admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['settings', 'Settings & Services', Settings], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  super_admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
 };
 
-function Dashboard({ user, setUser, users, types, activities, logistics, onLogout, refresh, refreshing, flash }) {
+function Dashboard({ user, setUser, users, types, activities, logistics, storeItems, onLogout, refresh, refreshing, flash }) {
   const nav = NAV[user.role];
   const [view, setView] = useState(nav[0][0]);
   const roleDef = ROLE_MAP[user.role];
 
-  const ctx = { user, setUser, users, types, activities, logistics, refresh, flash };
+  const ctx = { user, setUser, users, types, activities, logistics, storeItems, refresh, flash };
 
   return (
-    <div className="flex min-h-[600px]">
+    <div className="flex min-h-screen bg-slate-50 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-amber-100/40 via-slate-50 to-slate-100">
       {/* desktop sidebar */}
-      <div className="hidden md:flex flex-col w-56 shrink-0 fl-stub" style={{ background: COLORS.ink }}>
-        <div className="w-full pl-2">
-          <div className="p-4 flex items-center gap-2">
-            <div className="fl-display px-2 py-0.5 rounded" style={{ background: COLORS.amber, color: COLORS.ink, fontWeight: 800 }}>FL</div>
-            <div className="fl-display font-bold tracking-wide" style={{ color: COLORS.paper }}>FIELD LEDGER</div>
+      <div className="hidden md:flex flex-col w-64 shrink-0 bg-slate-900 text-slate-300 border-r border-slate-800 shadow-2xl z-20">
+        <div className="w-full flex flex-col h-full">
+          <div className="p-6 flex items-center gap-3">
+            <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-amber-500 text-slate-900 flex items-center justify-center rounded-xl font-black text-xl shadow-lg">FL</div>
+            <div className="font-bold tracking-tight text-white text-lg leading-tight">FIELD<br/>LEDGER</div>
           </div>
-          <nav className="mt-2 px-2">
-            {nav.map(([id, label, Icon]) => (
-              <button key={id} onClick={() => setView(id)}
-                className="fl-focus w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm font-medium mb-1"
-                style={{ background: view === id ? 'rgba(232,162,58,0.15)' : 'transparent', color: view === id ? COLORS.amber : COLORS.paper }}>
-                <Icon size={16} />{label}
-              </button>
-            ))}
+          
+          <nav className="mt-4 px-4 flex-1 space-y-1.5">
+            {nav.map(([id, label, Icon]) => {
+              const active = view === id;
+              return (
+                <button key={id} onClick={() => setView(id)}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all group ${active ? 'bg-amber-500/10 text-amber-400' : 'hover:bg-slate-800/50 hover:text-white'}`}>
+                  <Icon size={18} className={active ? 'text-amber-500' : 'text-slate-500 group-hover:text-slate-400 transition-colors'} />
+                  {label}
+                </button>
+              );
+            })}
           </nav>
-          <div className="mt-auto p-3">
-            <button onClick={onLogout} className="fl-focus w-full flex items-center gap-2.5 px-3 py-2.5 rounded-md text-sm font-medium" style={{ color: COLORS.paper, opacity: 0.7 }}>
-              <LogOut size={16} />Log Out
+
+          <div className="p-4 border-t border-slate-800/50">
+            <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-white hover:bg-slate-800/50 transition-all">
+              <LogOut size={18} />Log Out
             </button>
           </div>
         </div>
       </div>
 
       {/* main */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        <div className="flex items-center justify-between px-4 md:px-6 py-3 border-b" style={{ borderColor: COLORS.line }}>
-          <div>
-            <div className="text-xs" style={{ color: COLORS.inkSoft }}>{roleDef.label}</div>
-            <div className="fl-display text-lg font-bold leading-tight">Hi, {user.name.split(' ')[0]}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={refresh} className="fl-focus p-2 rounded-md border" style={{ borderColor: COLORS.line }} title="Refresh">
-              <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} style={{ color: COLORS.inkSoft }} />
-            </button>
-            <Avatar name={user.name} size={34} />
-          </div>
-        </div>
+      <div className="flex-1 min-w-0 flex flex-col h-screen overflow-hidden relative">
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-amber-100 rounded-full blur-[100px] opacity-40 pointer-events-none -translate-y-1/2 translate-x-1/3"></div>
+        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-50 rounded-full blur-[100px] opacity-60 pointer-events-none translate-y-1/3 -translate-x-1/4"></div>
 
-        <div className="flex-1 overflow-y-auto fl-scroll p-4 md:p-6 pb-24 md:pb-6">
-          {view === 'log' && <AgentLog ctx={ctx} />}
-          {view === 'verify' && <LiveVerification ctx={ctx} />}
-          {view === 'stats' && <AgentStats ctx={ctx} />}
-          {view === 'supplies' && <SuppliesPanel ctx={ctx} />}
-          {view === 'team' && <SupervisorTeam ctx={ctx} />}
-          {view === 'queue' && <PrintQueue ctx={ctx} />}
-          {view === 'requests' && (user.role === 'store' ? <StoreRequests ctx={ctx} /> : <AdminRequestsView ctx={ctx} />)}
-          {view === 'overview' && <OrgOverview ctx={ctx} />}
-          {view === 'teams' && <SupervisorsBreakdown ctx={ctx} />}
-          {view === 'staff' && <StaffManager ctx={ctx} />}
-          {view === 'settings' && <SettingsManager ctx={ctx} />}
-          {view === 'profile' && <ProfilePanel ctx={ctx} onLogout={onLogout} />}
+        <header className="flex items-center justify-between px-6 py-4 bg-white/70 backdrop-blur-xl border-b border-slate-200/60 sticky top-0 z-10">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-widest text-slate-400 mb-0.5">{roleDef.label}</div>
+            <div className="text-2xl font-black text-slate-900 leading-none">Hi, {user.name.split(' ')[0]}</div>
+          </div>
+          <div className="flex items-center gap-4">
+            {user.role !== 'ict' && user.role !== 'store' && (
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 rounded-full border border-amber-200 text-amber-700 shadow-inner">
+                <Wallet size={14} className="opacity-70" />
+                <span className="text-sm font-bold tracking-tight">{fmtNaira(user.balance || 0)}</span>
+              </div>
+            )}
+            <button onClick={refresh} className="p-2.5 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-slate-900 hover:bg-slate-50 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-amber-500/30" title="Refresh">
+              <RefreshCw size={16} className={refreshing ? 'animate-spin text-amber-500' : ''} />
+            </button>
+            <Avatar name={user.name} size={42} />
+          </div>
+        </header>
+
+        <div className="flex-1 overflow-y-auto fl-scroll p-4 md:p-8 pb-28 md:pb-8 relative z-0">
+          <div className="max-w-6xl mx-auto">
+            {view === 'log' && <AgentLog ctx={ctx} />}
+            {view === 'verify' && <LiveVerification ctx={ctx} />}
+            {view === 'stats' && <AgentStats ctx={ctx} />}
+            {view === 'supplies' && <SuppliesPanel ctx={ctx} />}
+            {view === 'team' && <SupervisorTeam ctx={ctx} />}
+            {view === 'queue' && <PrintQueue ctx={ctx} />}
+            {view === 'requests' && (user.role === 'store' ? <StoreRequests ctx={ctx} /> : <AdminRequestsView ctx={ctx} />)}
+            {view === 'overview' && <OrgOverview ctx={ctx} />}
+            {view === 'teams' && <SupervisorsBreakdown ctx={ctx} />}
+            {view === 'staff' && <StaffManager ctx={ctx} />}
+            {view === 'settings' && <SettingsManager ctx={ctx} />}
+            {view === 'wallet' && <WalletView ctx={ctx} />}
+            {view === 'profile' && <ProfilePanel ctx={ctx} onLogout={onLogout} />}
+          </div>
         </div>
       </div>
 
       {/* mobile bottom nav */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 flex border-t z-40" style={{ background: COLORS.ink, borderColor: COLORS.line }}>
-        {nav.map(([id, label, Icon]) => (
-          <button key={id} onClick={() => setView(id)} className="fl-focus flex-1 flex flex-col items-center gap-0.5 py-2.5"
-            style={{ color: view === id ? COLORS.amber : COLORS.paper, opacity: view === id ? 1 : 0.65 }}>
-            <Icon size={18} /><span className="text-[10px] font-medium">{label}</span>
-          </button>
-        ))}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 flex bg-white/90 backdrop-blur-lg border-t border-slate-200 pb-safe z-40 shadow-[0_-4px_20px_rgb(0,0,0,0.05)]">
+        {nav.map(([id, label, Icon]) => {
+          const active = view === id;
+          return (
+            <button key={id} onClick={() => setView(id)} className="flex-1 flex flex-col items-center gap-1 py-3 focus:outline-none">
+              <Icon size={20} className={`transition-colors ${active ? 'text-amber-500' : 'text-slate-400'}`} />
+              <span className={`text-[10px] font-bold transition-colors ${active ? 'text-slate-900' : 'text-slate-500'}`}>{label}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -615,69 +686,139 @@ function Dashboard({ user, setUser, users, types, activities, logistics, onLogou
 
 function LiveVerification({ ctx }) {
   const { types, user, refresh, flash } = ctx;
-  const [method, setMethod] = useState('nin-verification');
-  const [inputValue, setInputValue] = useState('');
+  const [selectedService, setSelectedService] = useState(null);
+  const [formData, setFormData] = useState({});
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
-  const METHODS = [
-    { id: 'nin-verification', label: 'NIN by Number', placeholder: 'Enter 11-digit NIN' },
-    { id: 'nin-phone', label: 'NIN by Phone', placeholder: 'Enter linked phone number' },
-    { id: 'bvn-verification', label: 'BVN by Number', placeholder: 'Enter 11-digit BVN' },
-    { id: 'bvn-phone', label: 'BVN by Phone', placeholder: 'Enter linked phone number' }
+  const SERVICES = [
+    { id: 'nin-verification', provider: 'fasterverify', label: 'NIN Verification', desc: 'Verify via 11-digit NIN', icon: Fingerprint, base: 150, endpoint: 'nin/verify', method: 'POST' },
+    { id: 'nin-phone', provider: 'fasterverify', label: 'NIN by Phone', desc: 'Search NIN using phone number', icon: Smartphone, base: 160, endpoint: 'nin/phone', method: 'POST' },
+    { id: 'nin-tracking', provider: 'fasterverify', label: 'NIN Tracking ID', desc: 'Search using slip tracking ID', icon: Navigation, base: 200, endpoint: 'personalization/submit', method: 'POST' },
+    { id: 'nin-demography', provider: 'fasterverify', label: 'NIN Demography', desc: 'Search by exact demographics', icon: Users, base: 160, endpoint: 'nin/demographic', method: 'POST' },
+    { id: 'bvn-verification', provider: 'fasterverify', label: 'BVN Verification', desc: 'Verify via 11-digit BVN', icon: ShieldCheck, base: 150, endpoint: 'bvn/verify-basic', method: 'POST' },
+    { id: 'bvn-phone', provider: 'fasterverify', label: 'BVN by Phone', desc: 'Search BVN using phone number', icon: Smartphone, base: 150, endpoint: 'bvn/verify-advance', method: 'POST' },
+    { id: 'ipe-clearance', provider: 'fasterverify', label: 'IPE Clearance', desc: 'Submit IPE tracking ID', icon: FileCheck, base: 500, endpoint: 'ipe/clearance', method: 'POST' },
+    { id: 'ipe-status', provider: 'fasterverify', label: 'IPE Status', desc: 'Check IPE clearance status', icon: Activity, base: 0, endpoint: 'ipe/status', method: 'POST' },
+    { id: 'nin-validation', provider: 'fasterverify', label: 'NIN Validation', desc: 'Submit NIN for validation', icon: ShieldCheck, base: 500, endpoint: 'nin/validation', method: 'POST' },
+    { id: 'nin-validation-status', provider: 'fasterverify', label: 'NIN Validation Status', desc: 'Check validation status', icon: Activity, base: 0, endpoint: 'nin/validation-status', method: 'POST' },
   ];
 
-  const activeMethod = METHODS.find(m => m.id === method);
+  const handleSelectService = (s) => {
+    setSelectedService(s);
+    setFormData({});
+    setResult(null);
+  };
+
+  const handleChange = (field, val) => {
+    setFormData(prev => ({ ...prev, [field]: val }));
+  };
+
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    flash('Copied to clipboard!', 'green');
+  };
 
   const doVerify = async (e) => {
     e.preventDefault();
-    if (!inputValue.trim()) return;
-    
     setBusy(true); setResult(null);
-    const key = await safeGet('api_key', true);
+
+    const isFasterVerify = selectedService.provider === 'fasterverify';
+    const checkmyninKey = await safeGet('api_key', true);
+    const fasterverifyKey = await safeGet('fasterverify_key', true);
+    const key = isFasterVerify ? (import.meta.env.VITE_FASTERVERIFY_KEY || fasterverifyKey) : (import.meta.env.VITE_API_KEY || checkmyninKey);
+
     if (!key) {
-      flash('API Key not configured. Ask Super Admin to set it up.', 'red');
+      flash(`API Key for ${isFasterVerify ? 'FasterVerify' : 'CheckMyNINBVN'} not configured. Ask Super Admin.`, 'red');
       setBusy(false); return;
     }
 
-    let payload = {};
-    if (method === 'nin-verification') payload = { nin: inputValue.trim() };
-    else if (method === 'nin-phone') payload = { phone: inputValue.trim() };
-    else if (method === 'bvn-verification') payload = { bvn: inputValue.trim() };
-    else if (method === 'bvn-phone') payload = { phone: inputValue.trim() };
+    let payload = { ...formData };
+    
+    // Payload translations for FasterVerify
+    if (isFasterVerify) {
+      if (selectedService.id === 'nin-demography') {
+        payload = { first_name: formData.firstname, last_name: formData.lastname, gender: formData.gender, dob: formData.dob };
+      } else if (selectedService.id === 'nin-tracking') {
+        payload = { tracking_id: formData.tracking_id, slip_type: 'standard' };
+      }
+    } else {
+      payload.consent = true;
+      if (selectedService.serviceType) payload.service_type = selectedService.serviceType;
+    }
 
     try {
-      const res = await fetch(`https://checkmyninbvn.com.ng/api/${method}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': key },
-        body: JSON.stringify({ ...payload, consent: true }) // compliance enforce
-      });
-      const data = await res.json();
-      if (data.status === 'success' || data.data) {
-        setResult(data.data || data);
-        flash('Verification successful', 'green');
+      let res;
+      const cost = selectedService.base * 3;
+      if (cost > 0) {
+        if ((user.balance || 0) < cost) {
+          flash(`Insufficient funds. Please top up your wallet (Requires ₦${fmtNaira(cost)}).`, 'red');
+          setBusy(false); return;
+        }
+      }
+
+      const proxyPath = isFasterVerify ? '/fasterverify-api' : '/checkmyninbvn-api';
+      const headers = isFasterVerify 
+        ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }
+        : { 'Content-Type': 'application/json', 'x-api-key': key };
+
+      if (selectedService.method === 'GET') {
+        const queryParams = new URLSearchParams(payload).toString();
+        res = await fetch(`${proxyPath}/${selectedService.endpoint}?${queryParams}`, {
+          headers: isFasterVerify ? { 'Authorization': `Bearer ${key}` } : { 'x-api-key': key }
+        });
       } else {
-        flash(data.message || 'Verification failed or not found', 'red');
+        res = await fetch(`${proxyPath}/${selectedService.endpoint}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        });
+      }
+      
+      const data = await res.json();
+      if (data.status === 'success' || data.success === true || data.status === true || data.data || data.photo || data.slip_image || data.slip) {
+        // deduct balance
+        if (cost > 0) {
+          const updatedUser = { ...user, balance: (user.balance || 0) - cost };
+          setUser(updatedUser);
+          await saveItem(`users:${user.phone}`, updatedUser, true);
+          const tx = { id: uid(), userPhone: user.phone, type: 'deduction', amount: cost, desc: `API Call - ${selectedService.label}`, date: new Date().toISOString() };
+          await saveItem(`transactions:${tx.id}`, tx, true);
+        }
+
+        // Normalize FasterVerify differences
+        let normalizedData = data.data ? { ...data.data, ...data } : { ...data };
+        if (isFasterVerify) {
+          if (normalizedData.first_name) normalizedData.firstname = normalizedData.first_name;
+          if (normalizedData.middle_name) normalizedData.middlename = normalizedData.middle_name;
+          if (normalizedData.last_name) normalizedData.surname = normalizedData.last_name;
+          if (normalizedData.date_of_birth) normalizedData.dob = normalizedData.date_of_birth;
+          if (normalizedData.address) normalizedData.residence_address = normalizedData.address;
+        }
+
+        setResult({ ...normalizedData, isModification: !!selectedService.serviceType, isStatusCheck: selectedService.id === 'nin-modification-status' });
+        flash(data.message || 'Operation successful', 'green');
+      } else {
+        flash(data.message || 'Operation failed or not found', 'red');
       }
     } catch (err) {
-      flash('Network error connecting to verification API.', 'red');
+      flash('Network error connecting to API.', 'red');
     }
     setBusy(false);
   };
 
   const logToLedger = async () => {
     let typeId = null;
-    if (method.includes('nin')) typeId = types.find(t => t.id === 'nin')?.id;
-    if (method.includes('bvn')) typeId = types.find(t => t.id === 'bvn')?.id;
+    if (selectedService.id.includes('nin')) typeId = types.find(t => t.id === 'nin')?.id;
+    if (selectedService.id.includes('bvn')) typeId = types.find(t => t.id === 'bvn')?.id;
 
     if (!typeId) {
       flash('Service type not active in ledger.', 'red'); return;
     }
-
     const t = types.find(x => x.id === typeId);
     const entry = {
       id: uid(), agentPhone: user.phone, agentName: user.name, supervisorPhone: user.supervisorPhone || null,
-      typeId, typeName: t ? t.name : typeId, count: 1, date: todayStr(), note: `Verified via Live API (${inputValue})`,
+      typeId, typeName: t ? t.name : typeId, count: 1, date: todayStr(), note: `Verified via API (${selectedService.label})`,
       createdAt: new Date().toISOString(), printStatus: t && t.requiresPrinting ? 'pending' : null,
     };
     await saveItem(`activities:${entry.id}`, entry, true);
@@ -685,77 +826,328 @@ function LiveVerification({ ctx }) {
     flash('Automatically logged to your ledger!', 'green');
   };
 
-  return (
-    <div className="max-w-2xl">
-      <h2 className="fl-display text-xl font-bold mb-3">Live API Verification</h2>
-      
-      <Card className="p-4 mb-5">
-        <form onSubmit={doVerify}>
-          <div className="grid sm:grid-cols-2 gap-3 mb-4">
-            <Field label="Search Method">
-              <Select value={method} onChange={e => { setMethod(e.target.value); setResult(null); }}>
-                {METHODS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </Select>
-            </Field>
-            <Field label="Target Number">
-              <TextInput value={inputValue} onChange={e => setInputValue(e.target.value)} placeholder={activeMethod.placeholder} />
-            </Field>
+  const renderSlipTypeSelect = () => (
+    <>
+      <Field label="Slip Type">
+        <Select value={formData.slip_type || ''} onChange={e => handleChange('slip_type', e.target.value)}>
+          <option value="">Select Slip Type...</option>
+          <option value="information">Information Slip</option>
+          <option value="regular">Regular Slip</option>
+          <option value="standard">Standard Slip</option>
+          <option value="premium">Premium Slip</option>
+          <option value="vnin">VNIN Slip</option>
+        </Select>
+      </Field>
+      {formData.slip_type && (
+        <div className="mt-2 p-3 bg-white border border-slate-200 rounded-xl shadow-sm">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Sample Preview</div>
+            <div className="text-xs font-bold text-blue-600 capitalize">{formData.slip_type} Slip</div>
           </div>
-          <p className="text-xs mb-4" style={{ color: COLORS.inkSoft }}>
-            <strong>Compliance Notice:</strong> By clicking Verify, you confirm you have obtained explicit consent from the data subject as required by the NDPA.
-          </p>
-          <Btn type="submit" full disabled={busy} icon={busy ? Loader2 : Search}>{busy ? 'Contacting API…' : 'Run Live Verification'}</Btn>
-        </form>
-      </Card>
+          <img 
+            src={`${import.meta.env.BASE_URL}previews/${formData.slip_type}.png`} 
+            alt={`${formData.slip_type} preview`} 
+            className="w-full h-auto rounded-lg border border-slate-100 shadow-sm"
+            onError={(e) => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex'; }}
+          />
+          <div className="hidden h-32 flex-col items-center justify-center text-slate-400 text-xs border-2 border-dashed border-slate-200 rounded-lg bg-slate-50">
+            <span>Save your sample image as:</span>
+            <strong className="mt-1">/public/previews/{formData.slip_type}.png</strong>
+          </div>
+        </div>
+      )}
+    </>
+  );
 
-      {result && (
-        <div>
-          <SectionTitle>Verification Result</SectionTitle>
-          <Card className="overflow-hidden bg-white">
-            <div className="p-1" style={{ background: COLORS.ink }} />
-            <div className="p-4 sm:p-6 flex flex-col sm:flex-row gap-5 items-start">
-              {result.photo ? (
-                <div className="w-24 h-24 sm:w-32 sm:h-32 shrink-0 rounded-md overflow-hidden bg-gray-100 border border-gray-200">
-                  <img src={`data:image/jpeg;base64,${result.photo}`} alt="ID Photo" className="w-full h-full object-cover" />
+  const renderFormFields = () => {
+    const s = selectedService;
+    if (s.id === 'nin-verification') {
+      return (
+        <>
+          <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>
+          {renderSlipTypeSelect()}
+        </>
+      );
+    }
+    if (s.id === 'nin-phone') {
+      return (
+        <>
+          <Field label="Phone Number"><TextInput value={formData.phone || ''} onChange={e => handleChange('phone', e.target.value)} /></Field>
+          {renderSlipTypeSelect()}
+        </>
+      );
+    }
+    if (s.id === 'bvn-phone') {
+      return <Field label="Phone Number"><TextInput value={formData.phone || ''} onChange={e => handleChange('phone', e.target.value)} /></Field>;
+    }
+    if (s.id === 'nin-tracking') {
+      return (
+        <>
+          <Field label="Tracking ID"><TextInput value={formData.tracking_id || ''} onChange={e => handleChange('tracking_id', e.target.value)} /></Field>
+          {renderSlipTypeSelect()}
+        </>
+      );
+    }
+    if (s.id === 'ipe-clearance' || s.id === 'ipe-status') {
+      return <Field label="Tracking ID"><TextInput value={formData.tracking_id || ''} onChange={e => handleChange('tracking_id', e.target.value)} /></Field>;
+    }
+    if (s.id === 'bvn-verification') {
+      return <Field label="11-Digit BVN"><TextInput value={formData.bvn || ''} onChange={e => handleChange('bvn', e.target.value)} /></Field>;
+    }
+    if (s.id === 'nin-validation' || s.id === 'nin-validation-status') {
+      return <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>;
+    }
+    if (s.id === 'nin-demography') {
+      return <>
+        <Field label="First Name"><TextInput value={formData.firstname || ''} onChange={e => handleChange('firstname', e.target.value)} /></Field>
+        <Field label="Last Name"><TextInput value={formData.lastname || ''} onChange={e => handleChange('lastname', e.target.value)} /></Field>
+        <Field label="Gender">
+          <Select value={formData.gender || ''} onChange={e => handleChange('gender', e.target.value)}>
+            <option value="">Select Gender...</option><option value="male">Male</option><option value="female">Female</option>
+          </Select>
+        </Field>
+        <Field label="Date of Birth (YYYY-MM-DD)"><TextInput type="date" value={formData.dob || ''} onChange={e => handleChange('dob', e.target.value)} /></Field>
+        {renderSlipTypeSelect()}
+      </>;
+    }
+    if (s.id === 'nin-modification-status') {
+      return <Field label="Reference ID"><TextInput value={formData.reference_id || ''} onChange={e => handleChange('reference_id', e.target.value)} placeholder="e.g. NM_API_..."/></Field>;
+    }
+    if (s.id === 'nin_name_modification') {
+      return <>
+        <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="Current Surname"><TextInput value={formData.surname || ''} onChange={e => handleChange('surname', e.target.value)} /></Field>
+          <Field label="Current Firstname"><TextInput value={formData.firstname || ''} onChange={e => handleChange('firstname', e.target.value)} /></Field>
+        </div>
+        <Field label="Phone Number"><TextInput value={formData.phone_number || ''} onChange={e => handleChange('phone_number', e.target.value)} /></Field>
+        <div className="grid grid-cols-2 gap-4">
+          <Field label="New Surname"><TextInput value={formData.new_surname || ''} onChange={e => handleChange('new_surname', e.target.value)} /></Field>
+          <Field label="New Firstname"><TextInput value={formData.new_firstname || ''} onChange={e => handleChange('new_firstname', e.target.value)} /></Field>
+        </div>
+        <Field label="New Middlename (optional)"><TextInput value={formData.new_middlename || ''} onChange={e => handleChange('new_middlename', e.target.value)} /></Field>
+      </>;
+    }
+    if (s.id === 'nin_phone_modification') {
+      return <>
+        <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>
+        <div className="grid grid-cols-3 gap-4">
+          <Field label="Current Surname"><TextInput value={formData.surname || ''} onChange={e => handleChange('surname', e.target.value)} /></Field>
+          <Field label="Current Firstname"><TextInput value={formData.firstname || ''} onChange={e => handleChange('firstname', e.target.value)} /></Field>
+          <Field label="Current Middlename"><TextInput value={formData.middlename || ''} onChange={e => handleChange('middlename', e.target.value)} /></Field>
+        </div>
+        <Field label="New Phone Number"><TextInput value={formData.new_phone_number || ''} onChange={e => handleChange('new_phone_number', e.target.value)} /></Field>
+      </>;
+    }
+    if (s.id === 'nin_address_modification') {
+      return <>
+        <Field label="11-Digit NIN"><TextInput value={formData.nin || ''} onChange={e => handleChange('nin', e.target.value)} /></Field>
+        <div className="grid grid-cols-3 gap-4">
+          <Field label="Current Surname"><TextInput value={formData.surname || ''} onChange={e => handleChange('surname', e.target.value)} /></Field>
+          <Field label="Current Firstname"><TextInput value={formData.firstname || ''} onChange={e => handleChange('firstname', e.target.value)} /></Field>
+          <Field label="Current Middlename"><TextInput value={formData.middlename || ''} onChange={e => handleChange('middlename', e.target.value)} /></Field>
+        </div>
+        <Field label="Phone Number"><TextInput value={formData.phone_number || ''} onChange={e => handleChange('phone_number', e.target.value)} /></Field>
+        <Field label="New Address"><TextInput value={formData.new_address || ''} onChange={e => handleChange('new_address', e.target.value)} /></Field>
+      </>;
+    }
+    if (s.id === 'nin_validation') {
+      return <>
+        <Field label="11-Digit NIN"><TextInput value={formData.nin_digits || ''} onChange={e => handleChange('nin_digits', e.target.value)} /></Field>
+        <Field label="Date of Birth (YYYY-MM-DD)"><TextInput type="date" value={formData.date_of_birth || ''} onChange={e => handleChange('date_of_birth', e.target.value)} /></Field>
+      </>;
+    }
+    return null;
+  };
+
+  return (
+    <div className="max-w-4xl mx-auto pb-10">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-black tracking-tight text-slate-900">Live API Hub</h2>
+        {selectedService && (
+          <Btn size="sm" tone="ghost" onClick={() => setSelectedService(null)}>Back to Services</Btn>
+        )}
+      </div>
+      
+      {!selectedService ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 animate-in fade-in slide-in-from-bottom-4">
+          {SERVICES.map(s => (
+            <button key={s.id} onClick={() => handleSelectService(s)} className="text-left bg-white/80 backdrop-blur-xl p-6 rounded-2xl border border-white/60 shadow-xl shadow-slate-200/40 hover:-translate-y-1 hover:shadow-2xl hover:border-amber-400/50 focus:outline-none focus:ring-2 focus:ring-amber-500/50 transition-all duration-300 group flex flex-col h-full">
+              <div className="flex items-start justify-between mb-5">
+                <div className="w-14 h-14 bg-slate-50 group-hover:bg-amber-100 rounded-2xl flex items-center justify-center transition-colors duration-300 shadow-inner">
+                  <s.icon size={26} className="text-slate-600 group-hover:text-amber-600 transition-colors duration-300" />
                 </div>
-              ) : (
-                <div className="w-24 h-24 sm:w-32 sm:h-32 shrink-0 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center text-xs text-gray-400 text-center">
-                  No Photo<br/>Available
-                </div>
-              )}
-              <div className="flex-1 min-w-0 space-y-3">
-                <div>
-                  <div className="text-xs uppercase tracking-widest text-gray-500 font-semibold mb-0.5">Full Name</div>
-                  <div className="text-lg font-bold">{(result.firstname || '') + ' ' + (result.middlename || '') + ' ' + (result.surname || '')}</div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-0.5">Date of Birth</div>
-                    <div className="text-sm font-medium">{result.birthdate || result.dob || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-0.5">Gender</div>
-                    <div className="text-sm font-medium">{result.gender || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-0.5">Phone Number</div>
-                    <div className="text-sm font-medium">{result.telephoneno || result.phone || 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-0.5">State</div>
-                    <div className="text-sm font-medium">{result.residence_state || result.state || 'N/A'}</div>
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] uppercase tracking-wider text-gray-500 font-semibold mb-0.5">Address</div>
-                  <div className="text-sm font-medium truncate">{result.residence_address || result.address || 'N/A'}</div>
+                <div className="text-right">
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Fee</div>
+                  <div className="font-black text-slate-900">{s.base === 0 ? 'Free' : fmtNaira(s.base * 3)}</div>
                 </div>
               </div>
+              <h3 className="font-bold text-slate-900 text-lg mb-1">{s.label}</h3>
+              <p className="text-sm font-medium text-slate-500 line-clamp-2">{s.desc}</p>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="animate-in slide-in-from-right-8 fade-in">
+          <Card className="p-6 mb-8 border-t-4 border-t-amber-500">
+            <div className="flex items-center gap-4 mb-6 pb-6 border-b border-slate-100">
+              <div className="w-14 h-14 bg-amber-100 rounded-2xl flex items-center justify-center shrink-0">
+                <selectedService.icon size={28} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-slate-900">{selectedService.label}</h3>
+                <p className="text-sm font-medium text-slate-500">{selectedService.desc} • {selectedService.base === 0 ? 'Free Service' : `Total Cost: ${fmtNaira(selectedService.base * 3)}`}</p>
+              </div>
             </div>
-            <div className="p-3 border-t bg-gray-50" style={{ borderColor: COLORS.line }}>
-              <Btn full tone="green" onClick={logToLedger} icon={ClipboardList}>Log this Verification to Ledger</Btn>
-            </div>
+            
+            <form onSubmit={doVerify} className="space-y-4">
+              {renderFormFields()}
+              
+              {!selectedService.isStatusCheck && (
+                <div className="flex items-start gap-3 bg-amber-50 p-4 rounded-xl mt-6">
+                  <ShieldCheck size={20} className="text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-800 leading-relaxed font-medium">
+                    <strong>Compliance Notice:</strong> By proceeding, you confirm you have obtained explicit consent from the data subject as required by the NDPA. Queries are strictly logged.
+                  </p>
+                </div>
+              )}
+              
+              <div className="pt-4">
+                <Btn type="submit" full disabled={busy} size="lg" icon={busy ? Loader2 : CheckCircle2}>
+                  {busy ? 'Processing via API…' : `Submit ${selectedService.label}`}
+                </Btn>
+              </div>
+            </form>
           </Card>
+
+          {result && (
+            <div className="animate-in fade-in slide-in-from-bottom-4">
+              <SectionTitle>Operation Result</SectionTitle>
+              
+              {result.isModification ? (
+                <Card className="p-8 text-center bg-emerald-50 border-emerald-200">
+                  <div className="w-16 h-16 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-4"><Check size={32} /></div>
+                  <h3 className="text-2xl font-black text-slate-900 mb-2">Order Submitted Successfully</h3>
+                  <p className="text-emerald-700 font-medium mb-6">Your modification order is queued for review (24-48h processing time).</p>
+                  
+                  <div className="max-w-sm mx-auto bg-white p-5 rounded-xl border border-emerald-200 shadow-sm relative">
+                    <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Reference ID</div>
+                    <div className="text-lg font-mono font-bold text-slate-900 break-all">{result.reference_id}</div>
+                    <button type="button" onClick={() => copyToClipboard(result.reference_id)} className="absolute top-4 right-4 p-2 text-slate-400 hover:text-emerald-600 bg-slate-50 hover:bg-emerald-50 rounded-lg transition-colors">
+                      <Copy size={16} />
+                    </button>
+                  </div>
+                  <p className="text-xs text-emerald-600 font-bold mt-4">Save this Reference ID to check the status later!</p>
+                </Card>
+              ) : result.isStatusCheck ? (
+                <Card className="p-6">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 pb-6 border-b border-slate-100">
+                    <div>
+                      <div className="text-sm font-bold text-slate-500 mb-1">{result.service_name || result.service_type || 'Modification Order'}</div>
+                      <div className="text-xl font-black text-slate-900">{result.reference_id}</div>
+                    </div>
+                    <Badge tone={result.status === 'completed' || result.status === 'approved' ? 'green' : result.status === 'rejected' ? 'red' : 'amber'}>
+                      {String(result.status).toUpperCase()}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div>
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Submitted</div>
+                      <div className="text-sm font-bold text-slate-900">{fmtDate(result.submitted_at || new Date().toISOString())}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Updated</div>
+                      <div className="text-sm font-bold text-slate-900">{fmtDate(result.updated_at || result.submitted_at || new Date().toISOString())}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Amount Charged</div>
+                      <div className="text-sm font-bold text-slate-900">{fmtNaira(result.amount_charged || 0)}</div>
+                    </div>
+                    <div className="col-span-2 sm:col-span-4 mt-2">
+                      <div className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Notes</div>
+                      <div className="text-sm font-medium text-slate-700 bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        {result.notes || result.status_detail || 'No additional notes provided.'}
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              ) : (
+                <Card className="overflow-hidden bg-white shadow-[0_8px_30px_rgb(0,0,0,0.08)] border-slate-200">
+                  <div className="p-1.5 bg-gradient-to-r from-emerald-400 to-emerald-500" />
+                  <div className="p-6 sm:p-8 flex flex-col sm:flex-row gap-6 sm:gap-8 items-start">
+                    {result.photo ? (
+                      <div className="w-28 h-28 sm:w-36 sm:h-36 shrink-0 rounded-2xl overflow-hidden bg-slate-100 shadow-inner border border-slate-200/60">
+                        <img src={result.photo.startsWith('data:') ? result.photo : `data:image/jpeg;base64,${result.photo}`} alt="ID Photo" className="w-full h-full object-cover" />
+                      </div>
+                    ) : (
+                      <div className="w-28 h-28 sm:w-36 sm:h-36 shrink-0 rounded-2xl bg-slate-50 border border-slate-200 border-dashed flex flex-col items-center justify-center text-xs text-slate-400 text-center shadow-inner">
+                        <User size={32} className="mb-2 text-slate-300" />
+                        No Photo<br/>Available
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0 space-y-5">
+                      <div>
+                        <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Full Name</div>
+                        <div className="text-xl sm:text-2xl font-black text-slate-900 leading-tight">{(result.firstname || '') + ' ' + (result.middlename || '') + ' ' + (result.surname || result.lastname || '')}</div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-5 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+                        <div>
+                          <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Date of Birth</div>
+                          <div className="text-sm font-bold text-slate-700">{result.birthdate || result.dob || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Gender</div>
+                          <div className="text-sm font-bold text-slate-700">{result.gender || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Phone Number</div>
+                          <div className="text-sm font-bold text-slate-700">{result.telephoneno || result.phone || 'N/A'}</div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">State</div>
+                          <div className="text-sm font-bold text-slate-700">{result.residence_state || result.state || result.state_of_residence || 'N/A'}</div>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Address</div>
+                        <div className="text-sm font-medium text-slate-700">{result.residence_address || result.address || 'N/A'}</div>
+                      </div>
+
+                      {/* Generated Slip Renderer */}
+                      {(result.slip || result.slip_image || (formData.slip_type && result.photo)) && (
+                        <div className="mt-6 border-t border-slate-200/60 pt-6">
+                          <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-3">Generated Slip Image</div>
+                          <div className="w-full rounded-2xl overflow-hidden bg-slate-100 shadow-inner border border-slate-200/60 p-2">
+                            <img 
+                              src={(result.slip || result.slip_image || result.photo).startsWith('data:') 
+                                ? (result.slip || result.slip_image || result.photo) 
+                                : `data:image/jpeg;base64,${result.slip || result.slip_image || result.photo}`} 
+                              alt="Generated Slip" 
+                              className="w-full h-auto object-contain rounded-xl" 
+                            />
+                          </div>
+                          <div className="mt-3 flex justify-end">
+                            <Btn onClick={() => {
+                              const link = document.createElement('a');
+                              link.href = (result.slip || result.slip_image || result.photo).startsWith('data:') 
+                                ? (result.slip || result.slip_image || result.photo) 
+                                : `data:image/jpeg;base64,${result.slip || result.slip_image || result.photo}`;
+                              link.download = `${formData.slip_type || 'slip'}-${result.nin || formData.phone || Date.now()}.jpg`;
+                              link.click();
+                            }} icon={Download} tone="blue">Download Slip</Btn>
+                          </div>
+                        </div>
+                      )}
+
+                    </div>
+                  </div>
+                  <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-4">
+                    <Btn full tone="green" onClick={logToLedger} icon={ClipboardList}>Log this to Ledger</Btn>
+                  </div>
+                </Card>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -771,6 +1163,14 @@ function AgentLog({ ctx }) {
   const [date, setDate] = useState(todayStr());
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [printRequested, setPrintRequested] = useState(false);
+  const [issuedAtmCard, setIssuedAtmCard] = useState(false);
+  const [pdfFiles, setPdfFiles] = useState([]);
+
+  useEffect(() => {
+    const t = types.find(x => x.id === typeId);
+    if (t) setPrintRequested(!!t.requiresPrinting);
+  }, [typeId, types]);
 
   const activeTypes = types.filter(t => t.active !== false);
   const mine = activities.filter(a => a.agentPhone === user.phone);
@@ -781,18 +1181,117 @@ function AgentLog({ ctx }) {
 
   const submit = async () => {
     if (!typeId || count < 1) { flash('Pick a type and a count of at least 1.', 'red'); return; }
+    if (printRequested && pdfFiles.length === 0) { flash('Please upload the ID PDFs for printing.', 'amber'); return; }
+    
     setBusy(true);
+    
+    let uploadedUrls = [];
+    let finalFileNames = [];
+    
+    if (printRequested && pdfFiles.length > 0 && supabase) {
+      for (const f of pdfFiles) {
+        const ext = f.original.name.split('.').pop() || 'pdf';
+        const cleanName = f.newName || `ID_Document_${Date.now()}`;
+        const fName = `${cleanName.endsWith('.pdf') ? cleanName : cleanName + '.' + ext}`;
+        const filePath = `${user.phone}/${Date.now()}_${fName}`;
+        
+        const { data, error } = await supabase.storage.from('print_files').upload(filePath, f.original);
+        if (error) {
+          flash(`Failed to upload ${fName}: ` + error.message, 'red');
+          continue; // keep trying others
+        }
+        
+        const { data: urlData } = supabase.storage.from('print_files').getPublicUrl(filePath);
+        uploadedUrls.push(urlData.publicUrl);
+        finalFileNames.push(fName);
+      }
+    }
+    
     const t = types.find(x => x.id === typeId);
     const entry = {
       id: uid(), agentPhone: user.phone, agentName: user.name, supervisorPhone: user.supervisorPhone || null,
       typeId, typeName: t ? t.name : typeId, count: Number(count), date, note: note.trim(),
-      createdAt: new Date().toISOString(), printStatus: t && t.requiresPrinting ? 'pending' : null,
+      createdAt: new Date().toISOString(), printStatus: printRequested ? 'pending' : null,
+      issuedAtmCard,
+      printFileUrls: uploadedUrls,
+      printFileNames: finalFileNames
     };
     await saveItem(`activities:${entry.id}`, entry, true);
-    setCount(1); setNote('');
+    setCount(1); setNote(''); setIssuedAtmCard(false); setPdfFiles([]);
     await refresh();
     setBusy(false);
     flash('Entry saved.', 'green');
+  };
+
+  const handlePdfUpload = async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    setBusy(true);
+    
+    let processedFiles = [];
+    
+    for (const file of files) {
+      try {
+        if (file.type !== 'application/pdf') throw new Error("Only PDF files are supported for extraction");
+        const buffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+        let text = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          text += content.items.map(item => item.str).join(' ');
+        }
+        
+        const rawText = text;
+        const cleanTextForNin = text.replace(/[^a-zA-Z0-9]/g, '');
+        const ninMatch = cleanTextForNin.match(/(\d{11})/);
+        let nin = ninMatch ? ninMatch[1] : '';
+        
+        if (!nin) {
+           const fileNinMatch = file.name.replace(/[^0-9]/g, '').match(/(\d{11})/);
+           if (fileNinMatch) nin = fileNinMatch[1];
+        }
+        
+        let nameStr = 'Unknown_Name';
+        const surMatch = text.match(/Surname(?:\/Nom)?[\s:.]*([A-Za-z\-]+)/i);
+        const givenMatch = text.match(/Given(?:\sNames)?(?:\/Pr[eé]noms)?[\s:.]*([A-Za-z\-\s,]+?)(?=\s*(Date|NIN|National|Sex|Height|$))/i);
+        const firstMatch = text.match(/First\sName[\s:.]*([A-Za-z\-]+)/i);
+        const middleMatch = text.match(/Middle\sName[\s:.]*([A-Za-z\-]+)/i);
+        
+        if (surMatch && (givenMatch || firstMatch)) {
+           let given = '';
+           if (givenMatch) given = givenMatch[1].replace(/,/g, '').trim();
+           else if (firstMatch) given = `${firstMatch[1].trim()} ${middleMatch ? middleMatch[1].trim() : ''}`.trim();
+           nameStr = `${given} ${surMatch[1].trim()}`.trim();
+        } else {
+           nameStr = file.name.replace(/\.[^/.]+$/, ""); 
+           if (nin) nameStr = nameStr.replace(nin, '').replace(/[_.-]+/g, ' ').trim();
+        }
+
+        const cleanName = nameStr.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_');
+        const finalNin = nin || '';
+        const newName = `${cleanName || 'ID_Slip'}${finalNin ? '_' + finalNin : ''}.pdf`;
+        
+        const isImageOnly = text.trim().length < 20;
+        processedFiles.push({ id: uid(), original: file, newName, nin: finalNin, extractedName: nameStr, text, isImageOnly });
+        
+      } catch (err) {
+        console.error(err);
+        processedFiles.push({ id: uid(), original: file, newName: file.name, nin: '', extractedName: '', isImageOnly: true });
+      }
+    }
+    
+    setPdfFiles(prev => [...prev, ...processedFiles]);
+    if (processedFiles.length > 0) flash(`Processed ${processedFiles.length} file(s)`, 'green');
+    setBusy(false);
+  };
+  
+  const updatePdfFile = (id, updates) => {
+    setPdfFiles(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
+  };
+  
+  const removePdfFile = (id) => {
+    setPdfFiles(prev => prev.filter(f => f.id !== id));
   };
 
   const removeEntry = async (id) => {
@@ -803,49 +1302,100 @@ function AgentLog({ ctx }) {
 
   return (
     <div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatTile label="Today's Tally" value={todayCount} icon={ClipboardList} />
         <StatTile label="Today's Value" value={fmtNaira(todayValue)} icon={CircleDollarSign} />
         <StatTile label="Entries Today" value={today.length} icon={TrendingUp} />
         <StatTile label="Supervisor" value={ctx.users.find(u => u.phone === user.supervisorPhone)?.name?.split(' ')[0] || '—'} icon={Users} />
       </div>
 
-      <Card className="p-4 mb-6">
+      <Card className="p-6 mb-8">
         <SectionTitle>Manual Tally Logging</SectionTitle>
-        <span className="block text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: COLORS.inkSoft }}>Type</span>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        <span className="block text-xs font-bold text-slate-700 mb-2">Registration Type</span>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
           {activeTypes.map(t => (
-            <button key={t.id} onClick={() => setTypeId(t.id)} className="fl-focus text-left p-2.5 rounded-md border"
-              style={{ borderColor: typeId === t.id ? COLORS.amberDark : COLORS.line, background: typeId === t.id ? '#FBEBD1' : '#fff' }}>
-              <div className="text-xs font-semibold">{t.name}</div>
-              <div className="text-[10px] fl-mono" style={{ color: COLORS.inkSoft }}>{fmtNaira(t.price)}/reg</div>
+            <button key={t.id} onClick={() => setTypeId(t.id)} className={`text-left p-3 rounded-xl border transition-all ${typeId === t.id ? 'border-amber-500 bg-amber-50 shadow-sm ring-1 ring-amber-500' : 'border-slate-200 bg-white/50 hover:bg-white hover:border-slate-300'}`}>
+              <div className="text-sm font-bold text-slate-900">{t.name}</div>
+              <div className="text-[11px] font-medium text-slate-500 mt-0.5">{fmtNaira(t.price)}/reg</div>
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Count">
-            <div className="flex items-center gap-2">
-              <button onClick={() => setCount(c => Math.max(1, c - 1))} className="fl-focus p-2 rounded-md border" style={{ borderColor: COLORS.line }}><Minus size={14} /></button>
-              <input type="number" value={count} onChange={e => setCount(Math.max(1, Number(e.target.value) || 1))} className="fl-focus text-center rounded-md px-2 py-2 text-sm w-full" style={inputStyle} />
-              <button onClick={() => setCount(c => c + 1)} className="fl-focus p-2 rounded-md border" style={{ borderColor: COLORS.line }}><Plus size={14} /></button>
+            <div className="flex items-center gap-3">
+              <button onClick={() => setCount(c => Math.max(1, c - 1))} className="p-3 rounded-xl border border-slate-200 bg-white shadow-sm hover:bg-slate-50 text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all"><Minus size={16} /></button>
+              <input type="number" value={count} onChange={e => setCount(Math.max(1, Number(e.target.value) || 1))} className="w-full text-center rounded-xl px-4 py-2.5 text-lg font-bold bg-white/70 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all" />
+              <button onClick={() => setCount(c => c + 1)} className="p-3 rounded-xl border border-slate-200 bg-white shadow-sm hover:bg-slate-50 text-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-500/30 transition-all"><Plus size={16} /></button>
             </div>
           </Field>
           <Field label="Date"><TextInput type="date" value={date} max={todayStr()} onChange={e => setDate(e.target.value)} /></Field>
         </div>
         <Field label="Note (optional)"><TextInput value={note} onChange={e => setNote(e.target.value)} placeholder="Location, batch reference, etc." /></Field>
-        <Btn onClick={submit} full disabled={busy} icon={busy ? Loader2 : Check}>{busy ? 'Saving…' : 'Save Entry'}</Btn>
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors flex-1">
+            <input type="checkbox" checked={printRequested} onChange={e => setPrintRequested(e.target.checked)} className="w-4 h-4 text-amber-500 rounded focus:ring-amber-500" />
+            <span className="text-sm font-bold text-slate-700">Send for ID Printing</span>
+          </label>
+          <label className="flex items-center gap-3 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors flex-1">
+            <input type="checkbox" checked={issuedAtmCard} onChange={e => setIssuedAtmCard(e.target.checked)} className="w-4 h-4 text-amber-500 rounded focus:ring-amber-500" />
+            <span className="text-sm font-bold text-slate-700">Issued ATM Card</span>
+          </label>
+        </div>
+
+        {printRequested && (
+          <div className="mb-6 p-4 rounded-xl border border-amber-200 bg-amber-50/50">
+            <label className="block text-sm font-bold text-slate-700 mb-2">Upload ID Document(s) (PDF)</label>
+            <input type="file" multiple accept="application/pdf,image/*" onChange={handlePdfUpload} className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-amber-100 file:text-amber-700 hover:file:bg-amber-200 transition-colors" />
+            
+            {pdfFiles.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {pdfFiles.map((pdf, idx) => (
+                  <div key={pdf.id} className="text-sm bg-white p-3 rounded-lg border border-amber-100 shadow-sm flex flex-col gap-2 relative">
+                    <button onClick={() => removePdfFile(pdf.id)} className="absolute top-3 right-3 text-slate-400 hover:text-rose-500 transition-colors"><X size={16} /></button>
+                    
+                    {pdf.isImageOnly ? (
+                      <div className="flex items-center gap-2 text-amber-600 font-bold bg-amber-50 p-2 rounded border border-amber-100">
+                        <AlertCircle size={16} /> Image-Only PDF (File {idx + 1})
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 text-emerald-600 font-bold bg-emerald-50 p-2 rounded border border-emerald-100">
+                        <CheckCircle2 size={16} /> Scan Complete (File {idx + 1})
+                      </div>
+                    )}
+
+                    <Field label="Detected Name">
+                      <TextInput value={pdf.extractedName || ''} onChange={e => updatePdfFile(pdf.id, { extractedName: e.target.value, newName: `${e.target.value.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_${pdf.nin}.pdf`})} placeholder="Type name manually if missing" />
+                    </Field>
+                    <Field label="Detected NIN">
+                      <TextInput value={pdf.nin || ''} onChange={e => updatePdfFile(pdf.id, { nin: e.target.value, newName: `${pdf.extractedName.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_${e.target.value}.pdf`})} placeholder="Type 11-digit NIN if missing" />
+                    </Field>
+                    <div className="text-xs text-slate-500 mt-1 font-medium bg-slate-50 p-2 rounded">
+                      File will be saved as: <strong className="text-slate-800 break-all">{pdf.newName}</strong>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+        <Btn onClick={submit} full disabled={busy} size="lg" icon={busy ? Loader2 : Check}>{busy ? 'Saving…' : 'Save Entry'}</Btn>
       </Card>
 
       <SectionTitle>Today's Entries</SectionTitle>
       {today.length === 0 && <Empty text="No entries logged yet today." />}
-      <div className="space-y-2">
+      <div className="space-y-3">
         {today.map(a => (
-          <Card key={a.id} className="p-3 flex items-center justify-between gap-2">
+          <Card key={a.id} className="p-4 flex items-center justify-between gap-4 group">
             <div className="min-w-0">
-              <div className="text-sm font-semibold truncate">{a.typeName} <span className="fl-mono font-normal" style={{ color: COLORS.inkSoft }}>× {a.count}</span></div>
-              <div className="text-xs fl-mono truncate" style={{ color: COLORS.inkSoft }}>{fmtTime(a.createdAt)} {a.note ? `· ${a.note}` : ''}</div>
+              <div className="text-base font-bold text-slate-900 truncate mb-1">{a.typeName} <span className="font-medium text-slate-400 ml-1">× {a.count}</span></div>
+              <div className="text-xs font-medium text-slate-500 truncate flex items-center gap-1.5">
+                <Clock size={12}/>{fmtTime(a.createdAt)} 
+                {a.note ? `· ${a.note}` : ''}
+                {a.issuedAtmCard ? <span className="ml-1 text-emerald-600 font-bold tracking-wide">· ATM Card</span> : ''}
+                {a.printStatus ? <span className="ml-1 text-amber-600 font-bold tracking-wide">· Print</span> : ''}
+              </div>
             </div>
-            <button onClick={() => removeEntry(a.id)} className="fl-focus p-1.5" style={{ color: COLORS.red }}><Trash2 size={15} /></button>
+            <button onClick={() => removeEntry(a.id)} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500/30"><Trash2 size={18} /></button>
           </Card>
         ))}
       </div>
@@ -864,21 +1414,21 @@ function AgentStats({ ctx }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="fl-display text-xl font-bold">My Performance</h2>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+        <h2 className="text-2xl font-black tracking-tight text-slate-900">My Performance</h2>
         <RangeTabs value={range} onChange={setRange} />
       </div>
-      <div className="grid grid-cols-2 gap-3 mb-4">
+      <div className="grid grid-cols-2 gap-4 mb-8">
         <StatTile label="Registrations" value={count} icon={ClipboardList} />
         <StatTile label="Value Generated" value={fmtNaira(value)} icon={CircleDollarSign} />
       </div>
       <SectionTitle>By Type</SectionTitle>
       {bt.length === 0 ? <Empty text="No activity in this range." /> : (
-        <Card className="p-3 space-y-2">
+        <Card className="p-2 space-y-1">
           {bt.map(b => (
-            <div key={b.name} className="flex items-center justify-between text-sm">
-              <span>{b.name}</span>
-              <span className="fl-mono font-semibold">{b.count}</span>
+            <div key={b.name} className="flex items-center justify-between px-4 py-3 rounded-lg hover:bg-slate-50 transition-colors">
+              <span className="font-semibold text-slate-700">{b.name}</span>
+              <span className="font-bold text-slate-900 bg-slate-100 px-3 py-1 rounded-md">{b.count}</span>
             </div>
           ))}
         </Card>
@@ -912,21 +1462,26 @@ function SuppliesPanel({ ctx }) {
   };
 
   return (
-    <div>
-      <h2 className="fl-display text-xl font-bold mb-3">Supplies &amp; Logistics</h2>
-      <Card className="p-4 mb-4">
+    <div className="max-w-3xl">
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Supplies & Logistics</h2>
+      <Card className="p-6 mb-8">
         <SectionTitle>Request Supplies</SectionTitle>
-        <Field label="Item"><TextInput value={item} onChange={e => setItem(e.target.value)} placeholder="e.g. NIN capture forms, SIM starter packs" /></Field>
-        <div className="grid grid-cols-2 gap-3">
+        <Field label="Item">
+          <TextInput list="store-items-list" value={item} onChange={e => setItem(e.target.value)} placeholder="Select item or type custom..." />
+          <datalist id="store-items-list">
+            {ctx.storeItems?.map(i => <option key={i} value={i} />)}
+          </datalist>
+        </Field>
+        <div className="grid sm:grid-cols-2 gap-4">
           <Field label="Quantity"><TextInput type="number" min={1} value={qty} onChange={e => setQty(e.target.value)} /></Field>
           <Field label="Note (optional)"><TextInput value={note} onChange={e => setNote(e.target.value)} placeholder="Delivery location, urgency…" /></Field>
         </div>
-        <Btn onClick={submit} full disabled={busy} icon={busy ? Loader2 : Package}>{busy ? 'Sending…' : 'Send Request to Store'}</Btn>
+        <Btn onClick={submit} full disabled={busy} size="lg" icon={busy ? Loader2 : Package}>{busy ? 'Sending…' : 'Send Request to Store'}</Btn>
       </Card>
 
       <SectionTitle>My Requests</SectionTitle>
       {mine.length === 0 ? <Empty text="No requests yet." /> : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {mine.map(l => <LogisticsRow key={l.id} l={l} />)}
         </div>
       )}
@@ -935,19 +1490,19 @@ function SuppliesPanel({ ctx }) {
 }
 
 function statusBadge(status) {
-  if (status === 'dispatched') return <Badge tone="green"><CheckCircle2 size={11} />Dispatched</Badge>;
-  if (status === 'rejected') return <Badge tone="red"><XCircle size={11} />Rejected</Badge>;
-  return <Badge tone="amber"><Clock size={11} />Pending</Badge>;
+  if (status === 'dispatched') return <Badge tone="green"><CheckCircle2 size={12} className="mr-0.5" />Dispatched</Badge>;
+  if (status === 'rejected') return <Badge tone="red"><XCircle size={12} className="mr-0.5" />Rejected</Badge>;
+  return <Badge tone="amber"><Clock size={12} className="mr-0.5" />Pending</Badge>;
 }
 
 function LogisticsRow({ l, action }) {
   return (
-    <Card className="p-3 flex items-center justify-between gap-3">
-      <div className="min-w-0">
-        <div className="text-sm font-semibold truncate">{l.item} <span className="fl-mono font-normal" style={{ color: COLORS.inkSoft }}>× {l.quantity}</span></div>
-        <div className="text-xs truncate" style={{ color: COLORS.inkSoft }}>{l.requesterName} · {ROLE_MAP[l.requesterRole]?.label || l.requesterRole} {l.note ? `· ${l.note}` : ''}</div>
+    <Card className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group hover:border-slate-300 transition-colors">
+      <div className="min-w-0 flex-1">
+        <div className="text-base font-bold text-slate-900 truncate mb-1">{l.item} <span className="font-medium text-slate-400 ml-1">× {l.quantity}</span></div>
+        <div className="text-xs font-medium text-slate-500 truncate">{l.requesterName} · {ROLE_MAP[l.requesterRole]?.label || l.requesterRole} {l.note ? `· ${l.note}` : ''}</div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0">
         {statusBadge(l.status)}
         {action}
       </div>
@@ -978,11 +1533,11 @@ function SupervisorTeam({ ctx }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <h2 className="fl-display text-xl font-bold">My Team</h2>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+        <h2 className="text-2xl font-black tracking-tight text-slate-900">My Team</h2>
         <RangeTabs value={range} onChange={setRange} />
       </div>
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
         <StatTile label="Agents" value={myAgents.length} sub={myAgents.length > 10 ? 'Above recommended 10' : undefined} icon={Users} />
         <StatTile label="Registrations" value={teamCount} icon={ClipboardList} />
         <StatTile label="Value" value={fmtNaira(teamValue)} icon={CircleDollarSign} />
@@ -992,20 +1547,20 @@ function SupervisorTeam({ ctx }) {
       <LeaderboardTable rows={rows} />
 
       {unassigned.length > 0 && (
-        <>
+        <div className="mt-8">
           <SectionTitle>Unassigned Agents — Add to Team</SectionTitle>
-          <div className="space-y-2">
+          <div className="grid sm:grid-cols-2 gap-3 mt-4">
             {unassigned.map(a => (
-              <Card key={a.phone} className="p-3 flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Avatar name={a.name} size={30} />
-                  <div className="text-sm font-medium truncate">{a.name}</div>
+              <Card key={a.phone} className="p-4 flex items-center justify-between group hover:border-slate-300 transition-colors">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Avatar name={a.name} size={36} />
+                  <div className="text-sm font-bold text-slate-900 truncate">{a.name}</div>
                 </div>
-                <Btn size="sm" onClick={() => claim(a.phone)} icon={UserPlus}>Add</Btn>
+                <Btn size="sm" onClick={() => claim(a.phone)} tone="ghost" icon={UserPlus}>Add</Btn>
               </Card>
             ))}
           </div>
-        </>
+        </div>
       )}
     </div>
   );
@@ -1013,23 +1568,23 @@ function SupervisorTeam({ ctx }) {
 
 function LeaderboardTable({ rows, nameLabel = 'Name', valueLabel = 'Registrations' }) {
   return (
-    <Card className="overflow-hidden overflow-x-auto fl-scroll">
+    <Card className="overflow-hidden overflow-x-auto no-scrollbar shadow-sm">
       <table className="w-full text-sm">
         <thead>
-          <tr style={{ background: COLORS.ink }}>
-            <th className="px-3 py-2 text-left fl-display text-xs tracking-wide" style={{ color: COLORS.paper }}>#</th>
-            <th className="px-3 py-2 text-left fl-display text-xs tracking-wide" style={{ color: COLORS.paper }}>{nameLabel}</th>
-            <th className="px-3 py-2 text-right fl-display text-xs tracking-wide" style={{ color: COLORS.paper }}>{valueLabel}</th>
-            <th className="px-3 py-2 text-right fl-display text-xs tracking-wide" style={{ color: COLORS.paper }}>Value</th>
+          <tr className="bg-slate-900 border-b border-slate-800">
+            <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest font-bold text-slate-300">#</th>
+            <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest font-bold text-slate-300">{nameLabel}</th>
+            <th className="px-4 py-3 text-right text-[11px] uppercase tracking-widest font-bold text-slate-300">{valueLabel}</th>
+            <th className="px-4 py-3 text-right text-[11px] uppercase tracking-widest font-bold text-slate-300">Value</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={r.id || i} className="border-t" style={{ borderColor: COLORS.line }}>
-              <td className="px-3 py-2 fl-mono" style={{ color: COLORS.inkSoft }}>{i + 1}</td>
-              <td className="px-3 py-2 font-medium">{r.name}</td>
-              <td className="px-3 py-2 text-right fl-mono">{r.count}</td>
-              <td className="px-3 py-2 text-right fl-mono">{fmtNaira(r.value)}</td>
+            <tr key={r.id || i} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors group">
+              <td className="px-4 py-3 font-medium text-slate-400">{i + 1}</td>
+              <td className="px-4 py-3 font-bold text-slate-900">{r.name}</td>
+              <td className="px-4 py-3 text-right font-medium text-slate-600 bg-slate-50/50 group-hover:bg-slate-100/50 transition-colors">{r.count}</td>
+              <td className="px-4 py-3 text-right font-bold text-slate-900">{fmtNaira(r.value)}</td>
             </tr>
           ))}
           {rows.length === 0 && <tr><td colSpan={4}><Empty text="No entries yet." /></td></tr>}
@@ -1044,8 +1599,7 @@ function LeaderboardTable({ rows, nameLabel = 'Name', valueLabel = 'Registration
 function PrintQueue({ ctx }) {
   const { types, activities, refresh, flash } = ctx;
   const [filter, setFilter] = useState('pending');
-  const printableTypeIds = new Set(types.filter(t => t.requiresPrinting).map(t => t.id));
-  const queue = activities.filter(a => printableTypeIds.has(a.typeId)).sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const queue = activities.filter(a => a.printStatus === 'pending' || a.printStatus === 'printed').sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
   const shown = queue.filter(a => filter === 'all' ? true : (a.printStatus || 'pending') === filter);
   const pendingCount = queue.filter(a => (a.printStatus || 'pending') === 'pending').reduce((s, a) => s + Number(a.count || 0), 0);
 
@@ -1058,24 +1612,34 @@ function PrintQueue({ ctx }) {
 
   return (
     <div>
-      <h2 className="fl-display text-xl font-bold mb-3">ID Print Queue</h2>
-      <div className="grid grid-cols-2 gap-3 mb-4">
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">ID Print Queue</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
         <StatTile label="Pending Cards" value={pendingCount} icon={Printer} />
         <StatTile label="Batches Queued" value={queue.length} icon={ClipboardList} />
       </div>
-      <div className="mb-3">
+      <div className="mb-6">
         <RangeTabs value={filter} onChange={setFilter} options={[['pending', 'Pending'], ['printed', 'Printed'], ['all', 'All']]} />
       </div>
       {shown.length === 0 ? <Empty text="Nothing here." /> : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {shown.map(a => (
-            <Card key={a.id} className="p-3 flex items-center justify-between gap-3">
+            <Card key={a.id} className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 group hover:border-slate-300 transition-colors">
               <div className="min-w-0">
-                <div className="text-sm font-semibold">{a.typeName} <span className="fl-mono font-normal" style={{ color: COLORS.inkSoft }}>× {a.count}</span></div>
-                <div className="text-xs fl-mono" style={{ color: COLORS.inkSoft }}>{a.agentName} · {fmtDate(a.date)} {a.note ? `· ${a.note}` : ''}</div>
+                <div className="text-base font-bold text-slate-900 mb-1">{a.typeName} <span className="font-medium text-slate-400 ml-1">× {a.count}</span></div>
+                <div className="text-xs font-medium text-slate-500">{a.agentName} · {fmtDate(a.date)} {a.note ? `· ${a.note}` : ''}</div>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap sm:flex-nowrap items-center gap-3 shrink-0">
                 {(a.printStatus || 'pending') === 'printed' ? <Badge tone="green">Printed</Badge> : <Badge tone="amber">Pending</Badge>}
+                {a.printFileUrl && !a.printFileUrls && (
+                  <a href={a.printFileUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors border border-amber-200">
+                    <FileText size={14} /> ID Doc
+                  </a>
+                )}
+                {a.printFileUrls && a.printFileUrls.map((url, idx) => (
+                  <a key={idx} href={url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-amber-50 text-amber-600 rounded-lg hover:bg-amber-100 transition-colors border border-amber-200">
+                    <FileText size={14} /> ID Doc {idx + 1}
+                  </a>
+                ))}
                 <Btn size="sm" tone={(a.printStatus || 'pending') === 'printed' ? 'ghost' : 'green'} onClick={() => toggle(a)} icon={Check}>
                   {(a.printStatus || 'pending') === 'printed' ? 'Undo' : 'Mark Printed'}
                 </Btn>
@@ -1104,18 +1668,18 @@ function StoreRequests({ ctx }) {
 
   return (
     <div>
-      <h2 className="fl-display text-xl font-bold mb-3">Logistics Requests</h2>
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Logistics Requests</h2>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
         <StatTile label="Pending" value={logistics.filter(l => l.status === 'pending').length} icon={Clock} />
         <StatTile label="Dispatched" value={logistics.filter(l => l.status === 'dispatched').length} icon={CheckCircle2} />
         <StatTile label="Rejected" value={logistics.filter(l => l.status === 'rejected').length} icon={XCircle} />
       </div>
-      <div className="mb-3"><RangeTabs value={filter} onChange={setFilter} options={[['pending', 'Pending'], ['dispatched', 'Dispatched'], ['rejected', 'Rejected'], ['all', 'All']]} /></div>
+      <div className="mb-6"><RangeTabs value={filter} onChange={setFilter} options={[['pending', 'Pending'], ['dispatched', 'Dispatched'], ['rejected', 'Rejected'], ['all', 'All']]} /></div>
       {shown.length === 0 ? <Empty text="Nothing here." /> : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {shown.map(l => (
             <LogisticsRow key={l.id} l={l} action={l.status === 'pending' ? (
-              <div className="flex gap-1.5">
+              <div className="flex gap-2">
                 <Btn size="sm" tone="green" onClick={() => setStatus(l, 'dispatched')} icon={Check}>Dispatch</Btn>
                 <Btn size="sm" tone="red" onClick={() => setStatus(l, 'rejected')} icon={X}>Reject</Btn>
               </div>
@@ -1128,17 +1692,67 @@ function StoreRequests({ ctx }) {
 }
 
 function AdminRequestsView({ ctx }) {
-  const { logistics } = ctx;
+  const { logistics, storeItems, flash, refresh } = ctx;
   const sorted = [...logistics].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  const [newItem, setNewItem] = useState('');
+  const [addingItem, setAddingItem] = useState(false);
+
+  const handleAddItem = async () => {
+    if (!newItem.trim()) return;
+    setAddingItem(true);
+    const updated = [...(storeItems || []), newItem.trim()];
+    await saveItem('store_items', JSON.stringify(updated), true);
+    setNewItem('');
+    await refresh();
+    setAddingItem(false);
+    flash('Item added to Store Inventory.', 'green');
+  };
+
+  const handleRemoveItem = async (item) => {
+    if (!window.confirm(`Remove "${item}" from inventory?`)) return;
+    const updated = storeItems.filter(i => i !== item);
+    await saveItem('store_items', JSON.stringify(updated), true);
+    await refresh();
+    flash('Item removed.', 'amber');
+  };
+
   return (
     <div>
-      <h2 className="fl-display text-xl font-bold mb-3">Logistics Requests (Org-wide)</h2>
-      <div className="grid grid-cols-3 gap-3 mb-4">
-        <StatTile label="Pending" value={logistics.filter(l => l.status === 'pending').length} icon={Clock} />
-        <StatTile label="Dispatched" value={logistics.filter(l => l.status === 'dispatched').length} icon={CheckCircle2} />
-        <StatTile label="Rejected" value={logistics.filter(l => l.status === 'rejected').length} icon={XCircle} />
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Logistics & Store</h2>
+      
+      <div className="grid lg:grid-cols-3 gap-8 mb-8">
+        <div className="lg:col-span-2">
+          <SectionTitle>Logistics Requests (Org-wide)</SectionTitle>
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <StatTile label="Pending" value={logistics.filter(l => l.status === 'pending').length} icon={Clock} />
+            <StatTile label="Dispatched" value={logistics.filter(l => l.status === 'dispatched').length} icon={CheckCircle2} />
+            <StatTile label="Rejected" value={logistics.filter(l => l.status === 'rejected').length} icon={XCircle} />
+          </div>
+          {sorted.length === 0 ? <Empty text="No requests yet." /> : <div className="space-y-3">{sorted.map(l => <LogisticsRow key={l.id} l={l} />)}</div>}
+        </div>
+        
+        <div>
+          <SectionTitle>Store Inventory</SectionTitle>
+          <Card className="p-4 flex flex-col gap-4">
+            <div className="text-sm font-medium text-slate-500 mb-1">Items available for agents to request:</div>
+            
+            <div className="flex items-center gap-2">
+              <TextInput value={newItem} onChange={e => setNewItem(e.target.value)} placeholder="New item name..." />
+              <Btn size="md" onClick={handleAddItem} disabled={addingItem} icon={Plus} />
+            </div>
+
+            <div className="space-y-2 mt-2 border-t border-slate-100 pt-4">
+              {storeItems?.map(item => (
+                <div key={item} className="flex items-center justify-between bg-slate-50 border border-slate-100 p-2.5 rounded-lg">
+                  <span className="text-sm font-semibold text-slate-700">{item}</span>
+                  <button onClick={() => handleRemoveItem(item)} className="text-slate-400 hover:text-rose-500 transition-colors p-1"><X size={14} /></button>
+                </div>
+              ))}
+              {(!storeItems || storeItems.length === 0) && <div className="text-xs text-slate-400 text-center py-4">No items configured.</div>}
+            </div>
+          </Card>
+        </div>
       </div>
-      {sorted.length === 0 ? <Empty text="No requests yet." /> : <div className="space-y-2">{sorted.map(l => <LogisticsRow key={l.id} l={l} />)}</div>}
     </div>
   );
 }
@@ -1157,7 +1771,7 @@ function OrgOverview({ ctx }) {
       const key = await safeGet('api_key', true);
       if (key) {
         try {
-          const res = await fetch(`https://checkmyninbvn.com.ng/api/balance`, { headers: { 'x-api-key': key }});
+          const res = await fetch(`${import.meta.env.BASE_URL}checkmyninbvn-api/balance`, { headers: { 'x-api-key': key }});
           const data = await res.json();
           if (data.balance) setBalance(data.balance);
         } catch (e) { /* silent fail on network err */ }
@@ -1185,11 +1799,11 @@ function OrgOverview({ ctx }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <h2 className="fl-display text-xl font-bold">Organisation Overview</h2>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+        <h2 className="text-2xl font-black tracking-tight text-slate-900">Organisation Overview</h2>
         <RangeTabs value={range} onChange={setRange} />
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <StatTile label="Registrations" value={totalCount} icon={ClipboardList} />
         <StatTile label="Value Generated" value={fmtNaira(totalValue)} icon={CircleDollarSign} />
         <StatTile label="Active Agents" value={activeAgents} sub={`of ${agents.length} total`} icon={Users} />
@@ -1200,7 +1814,7 @@ function OrgOverview({ ctx }) {
         )}
       </div>
 
-      <div className="grid md:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-2 gap-8 mb-8">
         <div>
           <SectionTitle>Top Agents</SectionTitle>
           <LeaderboardTable rows={topAgents} />
@@ -1213,11 +1827,11 @@ function OrgOverview({ ctx }) {
 
       <SectionTitle>By Registration Type</SectionTitle>
       {bt.length === 0 ? <Empty text="No activity in this range." /> : (
-        <Card className="p-3 space-y-2">
+        <Card className="p-2 space-y-1 md:w-1/2">
           {bt.map(b => (
-            <div key={b.name} className="flex items-center justify-between text-sm">
-              <span>{b.name}</span>
-              <span className="fl-mono font-semibold">{b.count}</span>
+            <div key={b.name} className="flex items-center justify-between px-4 py-3 rounded-lg hover:bg-slate-50 transition-colors">
+              <span className="font-semibold text-slate-700">{b.name}</span>
+              <span className="font-bold text-slate-900 bg-slate-100 px-3 py-1 rounded-md">{b.count}</span>
             </div>
           ))}
         </Card>
@@ -1235,30 +1849,32 @@ function SupervisorsBreakdown({ ctx }) {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-        <h2 className="fl-display text-xl font-bold">Supervisors &amp; Teams</h2>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
+        <h2 className="text-2xl font-black tracking-tight text-slate-900">Supervisors & Teams</h2>
         <RangeTabs value={range} onChange={setRange} />
       </div>
       {supervisors.length === 0 && <Empty text="No supervisors registered yet." />}
-      <div className="space-y-3">
+      <div className="space-y-4">
         {supervisors.map(s => {
           const team = agents.filter(a => a.supervisorPhone === s.phone);
           const rows = agentRows(team, activities, types, range);
           const count = rows.reduce((x, y) => x + y.count, 0);
           const isOpen = open === s.phone;
           return (
-            <Card key={s.phone} className="p-0 overflow-hidden">
-              <button onClick={() => setOpen(isOpen ? null : s.phone)} className="fl-focus w-full flex items-center justify-between p-3">
-                <div className="flex items-center gap-2.5">
-                  <Avatar name={s.name} size={34} />
+            <Card key={s.phone} className={`p-0 overflow-hidden transition-all ${isOpen ? 'ring-2 ring-amber-500 border-amber-500 shadow-md' : 'hover:border-slate-300'}`}>
+              <button onClick={() => setOpen(isOpen ? null : s.phone)} className="w-full flex items-center justify-between p-4 focus:outline-none">
+                <div className="flex items-center gap-4">
+                  <Avatar name={s.name} size={42} />
                   <div className="text-left">
-                    <div className="text-sm font-semibold">{s.name}</div>
-                    <div className="text-xs" style={{ color: COLORS.inkSoft }}>{team.length} agents · {count} registrations</div>
+                    <div className="text-base font-bold text-slate-900">{s.name}</div>
+                    <div className="text-xs font-medium text-slate-500 mt-0.5">{team.length} agents · <span className="text-slate-900">{count} registrations</span></div>
                   </div>
                 </div>
-                <ChevronRight size={16} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }} />
+                <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-400">
+                  <ChevronRight size={18} style={{ transform: isOpen ? 'rotate(90deg)' : 'none', transition: 'transform .2s ease-in-out' }} className={isOpen ? 'text-amber-500' : ''} />
+                </div>
               </button>
-              {isOpen && <div className="px-3 pb-3"><LeaderboardTable rows={rows} /></div>}
+              {isOpen && <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-2"><LeaderboardTable rows={rows} /></div>}
             </Card>
           );
         })}
@@ -1297,33 +1913,40 @@ function StaffManager({ ctx }) {
 
   return (
     <div>
-      <h2 className="fl-display text-xl font-bold mb-3">Staff Directory</h2>
-      <div className="flex flex-wrap gap-2 mb-3">
-        <TextInput placeholder="Search name or phone…" value={q} onChange={e => setQ(e.target.value)} className="max-w-xs" />
-        <Select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="max-w-[180px]">
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Staff Directory</h2>
+      <div className="flex flex-col sm:flex-row gap-4 mb-6 bg-slate-100/50 p-2 rounded-xl">
+        <TextInput placeholder="Search name or phone…" value={q} onChange={e => setQ(e.target.value)} className="w-full sm:w-80 bg-white" />
+        <Select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className="w-full sm:w-48 bg-white">
           <option value="all">All Roles</option>
           {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
         </Select>
       </div>
-      <div className="space-y-2">
+      <div className="space-y-3">
         {filtered.map(u => (
-          <Card key={u.phone} className="p-3 flex items-center justify-between gap-3 flex-wrap">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <Avatar name={u.name} size={34} />
+          <Card key={u.phone} className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-all ${u.active === false ? 'opacity-60 bg-slate-50' : 'hover:border-slate-300'}`}>
+            <div className="flex items-center gap-4 min-w-0">
+              <Avatar name={u.name} size={42} />
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">{u.name} {u.phone === me.phone && <span className="text-xs" style={{ color: COLORS.inkSoft }}>(you)</span>}</div>
-                <div className="text-xs fl-mono truncate" style={{ color: COLORS.inkSoft }}>{u.phone} · {ROLE_MAP[u.role]?.label}</div>
+                <div className="text-base font-bold text-slate-900 truncate mb-1">
+                  {u.name} 
+                  {u.phone === me.phone && <span className="ml-2 px-2 py-0.5 rounded-full bg-slate-200 text-[10px] uppercase font-bold text-slate-600 tracking-wider align-middle">You</span>}
+                </div>
+                <div className="text-xs font-medium text-slate-500 truncate flex items-center gap-2">
+                  <span>{u.phone}</span>
+                  <span className="w-1 h-1 rounded-full bg-slate-300" />
+                  <span className="text-slate-700">{ROLE_MAP[u.role]?.label}</span>
+                </div>
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
               {u.role === 'agent' && (
-                <Select value={u.supervisorPhone || ''} onChange={e => reassign(u, e.target.value)} className="text-xs py-1.5 w-40">
+                <Select value={u.supervisorPhone || ''} onChange={e => reassign(u, e.target.value)} className="text-xs py-2 w-44">
                   <option value="">No supervisor</option>
                   {supervisors.map(s => <option key={s.phone} value={s.phone}>{s.name}</option>)}
                 </Select>
               )}
               {u.active === false ? <Badge tone="red">Inactive</Badge> : <Badge tone="green">Active</Badge>}
-              {u.phone !== me.phone && <Btn size="sm" tone="ghost" onClick={() => toggleActive(u)}>{u.active === false ? 'Reactivate' : 'Deactivate'}</Btn>}
+              {u.phone !== me.phone && <Btn size="sm" tone={u.active === false ? "primary" : "ghost"} onClick={() => toggleActive(u)}>{u.active === false ? 'Reactivate' : 'Deactivate'}</Btn>}
             </div>
           </Card>
         ))}
@@ -1342,14 +1965,20 @@ function SettingsManager({ ctx }) {
   const [newPrice, setNewPrice] = useState('');
   const [newPrint, setNewPrint] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [fasterverifyKey, setFasterverifyKey] = useState('');
+  const [paystackKey, setPaystackKey] = useState('');
   const [keyLoading, setKeyLoading] = useState(true);
 
   useEffect(() => { setRows(types); }, [types]);
 
   useEffect(() => {
     (async () => {
-      const k = await safeGet('api_key', true);
+      const k = import.meta.env.VITE_API_KEY || await safeGet('api_key', true);
       if (k) setApiKey(k);
+      const fk = import.meta.env.VITE_FASTERVERIFY_KEY || await safeGet('fasterverify_key', true);
+      if (fk) setFasterverifyKey(fk);
+      const pk = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || await safeGet('paystack_public_key', true);
+      if (pk) setPaystackKey(pk);
       setKeyLoading(false);
     })();
   }, []);
@@ -1372,63 +2001,231 @@ function SettingsManager({ ctx }) {
     flash('New type added.', 'green');
   };
 
-  const saveApiKey = async () => {
-    if (!apiKey.trim()) { flash('API key cannot be empty.', 'red'); return; }
+  const saveApiKeys = async () => {
     await saveItem('api_key', apiKey.trim(), true);
-    flash('API Key saved securely.', 'green');
+    await saveItem('fasterverify_key', fasterverifyKey.trim(), true);
+    await saveItem('paystack_public_key', paystackKey.trim(), true);
+    flash('API Keys saved securely.', 'green');
   };
 
   return (
-    <div>
-      <h2 className="fl-display text-xl font-bold mb-3">Settings &amp; Services</h2>
+    <div className="max-w-4xl">
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Settings & Services</h2>
 
-      {/* API Key Panel */}
-      <Card className="p-4 mb-6 border-l-4" style={{ borderLeftColor: COLORS.amberDark }}>
-        <SectionTitle>Verification API Integration</SectionTitle>
-        <p className="text-sm mb-4" style={{ color: COLORS.inkSoft }}>Configure your <strong>checkmyninbvn.com.ng</strong> API key to enable Live Verification for all agents.</p>
-        {!keyLoading && (
-          <div className="flex gap-3">
-            <TextInput type="password" placeholder="Paste x-api-key here..." value={apiKey} onChange={e => setApiKey(e.target.value)} className="flex-1" />
-            <Btn onClick={saveApiKey} icon={KeyRound}>Save Key</Btn>
-          </div>
-        )}
+      {/* API Key Integrations */}
+      <SectionTitle>API Integrations</SectionTitle>
+      <Card className="p-6 mb-8 border-l-4 border-l-blue-500 shadow-sm">
+        <p className="text-sm font-medium text-slate-500 mb-5 leading-relaxed">Configure your API keys for live verifications.</p>
+        <div className="grid sm:grid-cols-2 gap-5 mb-5">
+          <Field label="FasterVerify API Key (NIN Searches)">
+            <TextInput type="password" value={fasterverifyKey} onChange={e => setFasterverifyKey(e.target.value)} placeholder="Enter FasterVerify API Key" disabled={keyLoading} />
+          </Field>
+          <Field label="CheckMyNINBVN API Key (BVN Searches)">
+            <TextInput type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Enter CheckMyNINBVN API Key" disabled={keyLoading} />
+          </Field>
+          <Field label="Paystack Secret Key (Optional)">
+            <TextInput type="password" value={paystackKey} onChange={e => setPaystackKey(e.target.value)} placeholder="sk_test_..." disabled={keyLoading} />
+          </Field>
+        </div>
+        <Btn onClick={saveApiKeys} loading={keyLoading} icon={Check}>Save API Keys</Btn>
       </Card>
 
       {/* Pricing Table */}
-      <SectionTitle>Registration Types &amp; Pricing</SectionTitle>
-      <Card className="overflow-hidden mb-4">
-        <table className="w-full text-sm">
-          <thead>
-            <tr style={{ background: COLORS.ink }}>
-              <th className="px-3 py-2 text-left fl-display text-xs" style={{ color: COLORS.paper }}>Type</th>
-              <th className="px-3 py-2 text-left fl-display text-xs" style={{ color: COLORS.paper }}>Value (₦)</th>
-              <th className="px-3 py-2 text-center fl-display text-xs" style={{ color: COLORS.paper }}>Needs Printing</th>
-              <th className="px-3 py-2 text-center fl-display text-xs" style={{ color: COLORS.paper }}>Active</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(r => (
-              <tr key={r.id} className="border-t" style={{ borderColor: COLORS.line }}>
-                <td className="px-3 py-2"><TextInput value={r.name} onChange={e => update(r.id, { name: e.target.value })} /></td>
-                <td className="px-3 py-2"><TextInput type="number" value={r.price} onChange={e => update(r.id, { price: e.target.value })} className="w-28" /></td>
-                <td className="px-3 py-2 text-center"><input type="checkbox" checked={!!r.requiresPrinting} onChange={e => update(r.id, { requiresPrinting: e.target.checked })} /></td>
-                <td className="px-3 py-2 text-center"><input type="checkbox" checked={r.active !== false} onChange={e => update(r.id, { active: e.target.checked })} /></td>
+      <SectionTitle>Registration Types & Pricing</SectionTitle>
+      <Card className="overflow-hidden mb-8 shadow-sm">
+        <div className="overflow-x-auto no-scrollbar">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-900 border-b border-slate-800">
+                <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest font-bold text-slate-300">Type</th>
+                <th className="px-4 py-3 text-left text-[11px] uppercase tracking-widest font-bold text-slate-300">Value (₦)</th>
+                <th className="px-4 py-3 text-center text-[11px] uppercase tracking-widest font-bold text-slate-300">Needs Printing</th>
+                <th className="px-4 py-3 text-center text-[11px] uppercase tracking-widest font-bold text-slate-300">Active</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        <div className="p-3 border-t" style={{ borderColor: COLORS.line }}><Btn onClick={savePricing} icon={Check}>Save Changes</Btn></div>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50 transition-colors">
+                  <td className="px-4 py-3"><TextInput value={r.name} onChange={e => update(r.id, { name: e.target.value })} className="bg-transparent border-0 ring-0 focus:ring-1 focus:ring-amber-500 shadow-none px-2" /></td>
+                  <td className="px-4 py-3"><TextInput type="number" value={r.price} onChange={e => update(r.id, { price: e.target.value })} className="w-28 bg-transparent border-0 ring-0 focus:ring-1 focus:ring-amber-500 shadow-none px-2 text-right" /></td>
+                  <td className="px-4 py-3 text-center">
+                    <input type="checkbox" checked={!!r.requiresPrinting} onChange={e => update(r.id, { requiresPrinting: e.target.checked })} className="w-4 h-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500" />
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <input type="checkbox" checked={r.active !== false} onChange={e => update(r.id, { active: e.target.checked })} className="w-4 h-4 text-amber-500 border-slate-300 rounded focus:ring-amber-500" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <div className="p-4 bg-slate-50 border-t border-slate-100 flex justify-end"><Btn onClick={savePricing} icon={Check}>Save Changes</Btn></div>
       </Card>
 
       {/* Add New Type */}
       <SectionTitle>Add New Type</SectionTitle>
-      <Card className="p-4 mb-6">
-        <div className="grid sm:grid-cols-3 gap-3">
+      <Card className="p-6 mb-8">
+        <div className="grid sm:grid-cols-3 gap-5 mb-5">
           <Field label="Name"><TextInput value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Kuda Account" /></Field>
           <Field label="Value (₦)"><TextInput type="number" value={newPrice} onChange={e => setNewPrice(e.target.value)} /></Field>
-          <label className="flex items-center gap-2 mt-6"><input type="checkbox" checked={newPrint} onChange={e => setNewPrint(e.target.checked)} /><span className="text-sm">Requires ID printing</span></label>
+          <label className="flex items-center gap-3 mt-6 p-3 rounded-xl border border-slate-200 bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors">
+            <input type="checkbox" checked={newPrint} onChange={e => setNewPrint(e.target.checked)} className="w-4 h-4 text-amber-500 rounded focus:ring-amber-500" />
+            <span className="text-sm font-bold text-slate-700">Requires ID printing</span>
+          </label>
         </div>
         <Btn onClick={addType} icon={Plus}>Add Type</Btn>
+      </Card>
+    </div>
+  );
+}
+
+/* ----------------------------------- wallet & topup ----------------------------------- */
+
+function WalletView({ ctx }) {
+  const { user, setUser, flash } = ctx;
+  const [amount, setAmount] = useState('');
+  const [paystackKey, setPaystackKey] = useState('');
+  const [txHistory, setTxHistory] = useState([]);
+
+  useEffect(() => {
+    safeGet('paystack_public_key', true).then(k => setPaystackKey(import.meta.env.VITE_PAYSTACK_PUBLIC_KEY || k || ''));
+    
+    // Load simple local tx history for this user
+    (async () => {
+      const allTxs = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k.startsWith('ledger_shared_transactions:')) {
+          try {
+            const parsed = JSON.parse(localStorage.getItem(k));
+            if (parsed.userPhone === user.phone) allTxs.push(parsed);
+          } catch(e) {}
+        }
+      }
+      allTxs.sort((a, b) => new Date(b.date) - new Date(a.date));
+      setTxHistory(allTxs);
+    })();
+  }, [user.balance]);
+
+  const config = {
+    email: user.phone + '@fieldledger.com',
+    amount: (Number(amount) || 0) * 100, // Paystack expects kobo
+    publicKey: paystackKey,
+  };
+
+  const onSuccess = async (reference) => {
+    console.log("🚀 PAYSTACK SUCCESS FIRED! Reference data:", reference);
+    try {
+      if (ctx && ctx.flash) {
+        ctx.flash('Verifying payment with secure server...', 'amber');
+      }
+      
+      console.log("⏳ Invoking Edge Function verify-paystack...");
+      const { data, error } = await supabase.functions.invoke('verify-paystack', {
+        body: { reference: reference.reference, userPhone: user.phone }
+      });
+      console.log("📥 Edge Function Response:", { data, error });
+      
+      if (error) {
+        throw new Error(error.message || 'Edge function threw an error');
+      }
+      if (!data || !data.success) {
+        throw new Error(data?.error || 'Payment verification failed on server');
+      }
+      
+      // Update local state, database was already updated by Edge Function
+      const updatedUser = { ...user, balance: data.newBalance };
+      setUser(updatedUser);
+      
+      if (ctx && ctx.flash) ctx.flash('Wallet topped up securely!', 'green');
+      setAmount('');
+      
+      // Force refresh of transactions and state if needed
+      if (ctx && ctx.refresh) ctx.refresh();
+      
+    } catch (err) {
+      console.error("❌ Verification Error:", err);
+      if (ctx && ctx.flash) ctx.flash(err.message, 'red');
+    }
+  };
+
+  const onClose = () => flash('Payment cancelled.', 'amber');
+  
+  const initializePayment = usePaystackPayment(config);
+
+  const handleTopup = (e) => {
+    e.preventDefault();
+    if (!paystackKey) { flash('Paystack not configured. Contact Admin.', 'red'); return; }
+    if (Number(amount) < 100) { flash('Minimum top-up is N100', 'red'); return; }
+    initializePayment({ onSuccess, onClose });
+  };
+
+  return (
+    <div className="max-w-4xl">
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Digital Wallet</h2>
+      
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+        <Card className="p-8 text-center bg-gradient-to-br from-amber-500 to-amber-600 border-none shadow-xl relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-4 opacity-20"><Wallet size={120} /></div>
+          <div className="relative z-10">
+            <h3 className="text-amber-100 font-bold uppercase tracking-wider mb-2">Available Balance</h3>
+            <div className="text-5xl font-black text-white mb-6">{fmtNaira(user.balance || 0)}</div>
+            <div className="bg-white/20 rounded-xl p-4 text-left backdrop-blur-sm border border-white/20">
+              <p className="text-amber-50 text-sm font-medium leading-relaxed">
+                Use your wallet balance to access Live API Verification services like NIN matching and demographic searches instantly.
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-6 border-t-4 border-t-amber-500">
+          <h3 className="text-lg font-bold text-slate-900 mb-2">Top Up Balance</h3>
+          <p className="text-sm text-slate-500 mb-6">Deposit funds instantly using your ATM card or bank transfer via Paystack.</p>
+          
+          <form onSubmit={handleTopup} className="space-y-4">
+            <Field label="Deposit Amount (₦)">
+              <TextInput type="number" min="100" step="100" placeholder="e.g. 1000" value={amount} onChange={e => setAmount(e.target.value)} required className="text-lg font-bold" />
+            </Field>
+            
+            <div className="grid grid-cols-3 gap-2 mb-4">
+              {[500, 1000, 5000].map(val => (
+                <button type="button" key={val} onClick={() => setAmount(val.toString())} className="py-2 rounded-lg border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 hover:border-amber-300 hover:text-amber-600 transition-colors">
+                  +₦{val}
+                </button>
+              ))}
+            </div>
+
+            <Btn type="submit" className="w-full h-12 text-base shadow-lg" icon={CircleDollarSign}>
+              Pay with Paystack
+            </Btn>
+          </form>
+        </Card>
+      </div>
+
+      <SectionTitle>Recent Transactions</SectionTitle>
+      <Card className="overflow-hidden">
+        {txHistory.length === 0 ? (
+          <Empty text="No transactions yet. Top up your wallet to get started." />
+        ) : (
+          <div className="divide-y divide-slate-100">
+            {txHistory.map(tx => (
+              <div key={tx.id} className="p-4 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                <div className="flex items-center gap-4">
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${tx.type === 'deposit' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                    {tx.type === 'deposit' ? <Plus size={20} /> : <Minus size={20} />}
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-900">{tx.desc}</div>
+                    <div className="text-xs font-medium text-slate-400">{new Date(tx.date).toLocaleString()}</div>
+                  </div>
+                </div>
+                <div className={`font-black text-lg ${tx.type === 'deposit' ? 'text-emerald-600' : 'text-slate-900'}`}>
+                  {tx.type === 'deposit' ? '+' : '-'}{fmtNaira(tx.amount)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -1440,29 +2237,32 @@ function ProfilePanel({ ctx, onLogout }) {
   const { user, users } = ctx;
   const supervisor = users.find(u => u.phone === user.supervisorPhone);
   return (
-    <div className="max-w-md">
-      <h2 className="fl-display text-xl font-bold mb-3">Profile</h2>
-      <Card className="overflow-hidden">
-        <div className="flex fl-stub" style={{ background: COLORS.ink }}>
-          <div className="w-2 shrink-0" />
-          <div className="p-4 flex items-center gap-3 flex-1">
-            <Avatar name={user.name} size={48} />
+    <div className="max-w-md mx-auto sm:mx-0">
+      <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Profile</h2>
+      <Card className="overflow-hidden border-0 shadow-[0_8px_30px_rgb(0,0,0,0.08)]">
+        <div className="bg-slate-900 relative">
+          <div className="absolute inset-0 bg-gradient-to-r from-amber-500/20 to-transparent" />
+          <div className="p-6 sm:p-8 flex items-center gap-5 relative z-10">
+            <Avatar name={user.name} size={64} />
             <div>
-              <div className="fl-display text-lg font-bold" style={{ color: COLORS.paper }}>{user.name}</div>
-              <div className="text-xs" style={{ color: COLORS.amber }}>{ROLE_MAP[user.role]?.label}</div>
+              <div className="text-2xl font-black text-white tracking-tight mb-1">{user.name}</div>
+              <div className="inline-block px-3 py-1 rounded-full bg-slate-800 text-amber-400 text-[10px] uppercase font-bold tracking-widest">{ROLE_MAP[user.role]?.label}</div>
             </div>
           </div>
         </div>
-        <div className="p-4 space-y-2 text-sm">
-          <div className="flex justify-between"><span style={{ color: COLORS.inkSoft }}>Phone</span><span className="fl-mono">{user.phone}</span></div>
-          {user.role === 'agent' && <div className="flex justify-between"><span style={{ color: COLORS.inkSoft }}>Supervisor</span><span>{supervisor ? supervisor.name : 'Not assigned'}</span></div>}
-          <div className="flex justify-between"><span style={{ color: COLORS.inkSoft }}>Registered</span><span className="fl-mono">{(user.createdAt || '').slice(0, 10)}</span></div>
+        <div className="p-6 sm:p-8 space-y-4 text-sm bg-white">
+          <div className="flex justify-between items-center py-2 border-b border-slate-100 last:border-0"><span className="font-bold text-slate-400 uppercase text-[10px] tracking-widest">Phone</span><span className="font-bold text-slate-900">{user.phone}</span></div>
+          {user.role === 'agent' && <div className="flex justify-between items-center py-2 border-b border-slate-100 last:border-0"><span className="font-bold text-slate-400 uppercase text-[10px] tracking-widest">Supervisor</span><span className="font-medium text-slate-700">{supervisor ? supervisor.name : 'Not assigned'}</span></div>}
+          <div className="flex justify-between items-center py-2 border-b border-slate-100 last:border-0"><span className="font-bold text-slate-400 uppercase text-[10px] tracking-widest">Registered</span><span className="font-medium text-slate-700">{(user.createdAt || '').slice(0, 10)}</span></div>
         </div>
       </Card>
-      <div className="mt-4"><Btn tone="ghost" onClick={onLogout} icon={LogOut} full>Log Out</Btn></div>
-      <p className="text-[11px] mt-4" style={{ color: COLORS.inkSoft }}>
+      <div className="mt-6">
+        <Btn tone="ghost" onClick={onLogout} icon={LogOut} full size="lg" className="border-rose-200 text-rose-600 hover:bg-rose-50 hover:text-rose-700">Log Out</Btn>
+      </div>
+      <p className="text-[11px] mt-8 text-slate-400 leading-relaxed font-medium">
         Data in this app is stored and shared across everyone using this link. It's built for internal day-to-day tracking — for production rollout with sensitive ID data, plan to move to a properly secured backend.
       </p>
+
     </div>
   );
 }
