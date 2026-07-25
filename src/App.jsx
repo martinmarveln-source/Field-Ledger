@@ -1550,8 +1550,8 @@ function AgentLog({ ctx }) {
 }
 
 function AgentStats({ ctx }) {
-  const { user, types, activities } = ctx;
-  const [range, setRange] = useState('week');
+  const { user, types, activities, flash } = ctx;
+  const [range, setRange] = useState('today');
   const mine = activities.filter(a => a.agentPhone === user.phone && isInRange(a.date, range));
   const pm = priceMapOf(types);
   const count = mine.reduce((s, a) => s + Number(a.count || 0), 0);
@@ -1565,10 +1565,51 @@ function AgentStats({ ctx }) {
     totalTarget = user.target;
   }
 
+  const copyReport = () => {
+    const d = new Date();
+    const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+    const date = d.getDate();
+    const nth = (d) => {
+      if (d > 3 && d < 21) return 'th';
+      switch (d % 10) {
+        case 1:  return "st";
+        case 2:  return "nd";
+        case 3:  return "rd";
+        default: return "th";
+      }
+    };
+    const ds = `${days[d.getDay()]} ${date}${nth(date)} ${months[d.getMonth()]} ${d.getFullYear()}`;
+    const title = range === 'today' ? 'DAILY' : range === 'week' ? 'WEEKLY' : 'MONTHLY';
+    
+    let text = `*${title} REPORT FORMAT ${ds}:*\n\n`;
+    text += ` *Monthly Target:* ${totalTarget}/${count}\n\n`;
+    text += `Total Done: ${count}\n`;
+    
+    bt.forEach(b => {
+      text += `${b.name}: ${b.count}\n`;
+    });
+    
+    text += `Place of Work: \n`;
+    text += `Total Money to be Sent: ${value}\n\n`;
+    text += `Total Money Sent: 0`;
+
+    navigator.clipboard.writeText(text).then(() => {
+      flash('Report copied to clipboard!', 'green');
+    }).catch(() => {
+      flash('Failed to copy report.', 'red');
+    });
+  };
+
   return (
     <div>
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
-        <h2 className="text-2xl font-black tracking-tight text-slate-900">My Performance</h2>
+        <div className="flex items-center gap-4">
+          <h2 className="text-2xl font-black tracking-tight text-slate-900">My Performance</h2>
+          <button onClick={copyReport} className="flex items-center gap-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg text-sm font-bold transition-colors">
+            <ClipboardList size={16} /> Copy WhatsApp Report
+          </button>
+        </div>
         <RangeTabs value={range} onChange={setRange} />
       </div>
       <div className="grid grid-cols-2 gap-4 mb-8">
