@@ -969,16 +969,18 @@ function LiveVerification({ ctx }) {
       }
       
       const data = await res.json();
-      if (data.status === 'success' || data.success === true || data.status === true || data.data || data.photo || data.slip_image || data.slip) {
-        // deduct balance
-        if (cost > 0) {
-          const updatedUser = { ...user, balance: (user.balance || 0) - cost };
-          setUser(updatedUser);
-          await saveItem(`users:${user.phone}`, updatedUser, true);
-          const tx = { id: uid(), userPhone: user.phone, type: 'deduction', amount: cost, desc: `API Call - ${selectedService.label}`, date: new Date().toISOString() };
-          await saveItem(`transactions:${tx.id}`, tx, true);
-        }
+      const isSuccess = data.status === 'success' || data.success === true || data.status === true || data.data || data.photo || data.slip_image || data.slip;
+      const shouldCharge = isFasterVerify ? res.ok : isSuccess; // FasterVerify charges per hit (even if not found)
 
+      if (shouldCharge && cost > 0) {
+        const updatedUser = { ...user, balance: (user.balance || 0) - cost };
+        setUser(updatedUser); // assume setUser is not strictly needed here but user object is updated
+        await saveItem(`users:${user.phone}`, updatedUser, true);
+        const tx = { id: uid(), userPhone: user.phone, type: 'deduction', amount: cost, desc: `API Call - ${selectedService.label}`, date: new Date().toISOString() };
+        await saveItem(`transactions:${tx.id}`, tx, true);
+      }
+
+      if (isSuccess) {
         // Normalize FasterVerify differences
         let normalizedData = data.data ? { ...data.data, ...data } : { ...data };
         if (isFasterVerify) {
