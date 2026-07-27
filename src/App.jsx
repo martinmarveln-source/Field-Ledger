@@ -15,7 +15,7 @@ import {
   CircleDollarSign, Crown, Home, UserPlus, Trash2, Loader2, RefreshCw,
   ArrowRight, Eye, EyeOff, CheckCircle2, XCircle, Clock, Settings,
   Search, FileText, KeyRound, Wallet, Smartphone, Fingerprint, MapPin, 
-  Edit, Activity, Navigation, FileCheck, Copy, Download, Target, Calendar
+  Edit, Activity, Navigation, FileCheck, Copy, Download, Target, Calendar, Send
 } from 'lucide-react';
 
 /* ---------------------------------- config ---------------------------------- */
@@ -1567,7 +1567,7 @@ function AgentStats({ ctx }) {
     totalTarget = user.target;
   }
 
-  const copyReport = () => {
+  const sendToWhatsApp = () => {
     const d = new Date();
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
@@ -1597,11 +1597,9 @@ function AgentStats({ ctx }) {
     text += `Total Money to be Sent: ${value}\n\n`;
     text += `Total Money Sent: 0`;
 
-    navigator.clipboard.writeText(text).then(() => {
-      flash('Report copied to clipboard!', 'green');
-    }).catch(() => {
-      flash('Failed to copy report.', 'red');
-    });
+    // Open WhatsApp deep link with the text
+    const encodedText = encodeURIComponent(text);
+    window.open(`https://api.whatsapp.com/send?text=${encodedText}`, '_blank');
   };
 
   return (
@@ -1609,8 +1607,8 @@ function AgentStats({ ctx }) {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-6 gap-4">
         <div className="flex items-center gap-4">
           <h2 className="text-2xl font-black tracking-tight text-slate-900">My Performance</h2>
-          <button onClick={copyReport} className="flex items-center gap-2 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 px-3 py-1.5 rounded-lg text-sm font-bold transition-colors">
-            <ClipboardList size={16} /> Copy WhatsApp Report
+          <button onClick={sendToWhatsApp} className="flex items-center gap-2 bg-emerald-500 text-white hover:bg-emerald-600 px-4 py-1.5 rounded-lg text-sm font-bold transition-colors">
+            <Send size={16} /> Send to WhatsApp
           </button>
         </div>
         <RangeTabs value={range} onChange={setRange} />
