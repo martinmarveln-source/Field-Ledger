@@ -1129,6 +1129,12 @@ function LiveVerification({ ctx }) {
       if (isSuccess) {
         // Normalize FasterVerify differences
         let normalizedData = data.data ? { ...data.data, ...data } : { ...data };
+        
+        // Handle image inconsistencies (base64Image from BVN, photo from NIN)
+        if (normalizedData.base64Image && !normalizedData.photo) {
+          normalizedData.photo = normalizedData.base64Image;
+        }
+
         if (isFasterVerify) {
           if (normalizedData.first_name) normalizedData.firstname = normalizedData.first_name;
           if (normalizedData.middle_name) normalizedData.middlename = normalizedData.middle_name;
@@ -1163,7 +1169,7 @@ function LiveVerification({ ctx }) {
              nin: normalizedData.nin || '',
              dob: normalizedData.dob || '',
              isVerifyResult: true,
-             verifyData: normalizedData
+             verifyData: normalizedData // Raw data cleanly stored in Supabase under activities
           }]
         };
         await saveItem(`activities:${entry.id}`, entry, true);
@@ -1199,14 +1205,14 @@ function LiveVerification({ ctx }) {
 
   const renderSlipTypeSelect = () => (
     <>
-      <Field label="Slip Type">
+      <Field label="Desired Slip Type (FasterVerify)">
         <Select value={formData.slip_type || ''} onChange={e => handleChange('slip_type', e.target.value)}>
-          <option value="">Select Slip Type...</option>
-          <option value="information">Information Slip</option>
-          <option value="regular">Regular Slip</option>
-          <option value="standard">Standard Slip</option>
-          <option value="premium">Premium Slip</option>
-          <option value="vnin">VNIN Slip</option>
+          <option value="">No Slip / Data Only</option>
+          <option value="premium">Premium Slip (₦500)</option>
+          <option value="standard">Standard Slip (₦500)</option>
+          <option value="regular">Regular Slip (₦500)</option>
+          <option value="information">Information Slip (₦500)</option>
+          <option value="vnin">vNIN Slip (₦500)</option>
         </Select>
       </Field>
       {formData.slip_type && (
@@ -1436,6 +1442,21 @@ function LiveVerification({ ctx }) {
                         <div className="text-[10px] uppercase tracking-widest text-slate-400 font-bold mb-1">Address</div>
                         <div className="text-sm font-medium text-slate-700">{result.residence_address || result.address || 'N/A'}</div>
                       </div>
+
+                      {/* Download Buttons for Photo / Base64 Image */}
+                      {result.photo && (
+                        <div className="mt-6 border-t border-slate-200/60 pt-6">
+                          <div className="mt-3 flex justify-end gap-3">
+                            <Btn onClick={() => {
+                              const link = document.createElement('a');
+                              const imgSrc = result.photo.startsWith('data:') ? result.photo : `data:image/jpeg;base64,${result.photo}`;
+                              link.href = imgSrc;
+                              link.download = `photo-${result.nin || result.bvn || formData.phone || Date.now()}.jpg`;
+                              link.click();
+                            }} icon={Download} tone="blue">Download User Photo</Btn>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Generated Slip Renderer */}
                       {(result.slip || result.slip_image || (formData.slip_type && result.photo)) && (
