@@ -6,9 +6,12 @@ import * as pdfjsLib from 'pdfjs-dist';
 // Use a CDN for the worker to avoid Vite build configuration issues
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+// Supabase anon key is safe to expose publicly — it is a read-restricted public key designed for browser use.
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://wswrzwtktbhoftblbyxt.supabase.co';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indzd3J6d3RrdGJob2Z0YmxieXh0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ5NzYzOTUsImV4cCI6MjEwMDU1MjM5NX0.U7vZGApCx9qCLuQqIZpppv2Gy0Lz2x-RP2QzJp7M5Qk';
+const supabase = (SUPABASE_URL && SUPABASE_ANON_KEY && SUPABASE_URL.startsWith('http'))
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
 import {
   ClipboardList, Users, Printer, ShieldCheck, Boxes, LogOut, Plus, Minus,
   Check, X, Package, TrendingUp, User, ChevronRight, AlertCircle,
