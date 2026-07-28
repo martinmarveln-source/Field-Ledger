@@ -1635,6 +1635,17 @@ function UnifiedAgentLogTable({ activities, user, removeEntry }) {
                         <a href={`${f.url}?download=`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 font-bold rounded transition-colors">
                           <Download size={12} /> Download
                         </a>
+                      ) : f.isVerifyResult && f.verifyData && (f.verifyData.photo || f.verifyData.base64Image) ? (
+                        <button onClick={() => {
+                          const photo = f.verifyData.photo || f.verifyData.base64Image;
+                          const imgSrc = photo.startsWith('data:') ? photo : `data:image/jpeg;base64,${photo}`;
+                          const link = document.createElement('a');
+                          link.href = imgSrc;
+                          link.download = `photo-${f.nin || f.filename || Date.now()}.jpg`;
+                          link.click();
+                        }} className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-700 hover:bg-blue-100 font-bold rounded transition-colors">
+                          <Download size={12} /> Photo
+                        </button>
                       ) : (
                         <span className="text-[10px] text-slate-400 font-medium">API Data</span>
                       )}
