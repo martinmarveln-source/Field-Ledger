@@ -583,15 +583,20 @@ export default function App() {
     
     // Support both hashed PINs (pinHashed: true from old app) and plain text PINs
     let pinMatch = false;
-    if (u.pinHashed === true) {
-      // Old-style SHA-256 hashed PIN — hash the entered PIN and compare
+    // Auto-detect hashed PINs: SHA-256 produces a 64-character hex string
+    const looksHashed = /^[0-9a-f]{64}$/.test(storedPin);
+    if (looksHashed || u.pinHashed === true) {
+      // Hashed PIN — hash the entered PIN and compare
       const hashed = await hashPin(enteredPin);
       pinMatch = hashed === storedPin;
+      // Fallback: also try plain text in case of migration edge cases
+      if (!pinMatch) pinMatch = storedPin === enteredPin;
     } else {
       // Plain text PIN comparison
       pinMatch = storedPin === enteredPin;
     }
     
+    console.log('[Login] stored:', storedPin.slice(0,8) + '...', '| looksHashed:', looksHashed, '| match:', pinMatch);
     if (!pinMatch) return { ok: false, error: 'Incorrect PIN.' };
     if (u.active === false) return { ok: false, error: 'This account has been deactivated. Contact your Admin.' };
     setUser(u);
