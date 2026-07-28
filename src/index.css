@@ -1,9 +1,11 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
+@variant dark (&:where(.dark, .dark *));
 
 @layer base {
   body {
-    @apply bg-slate-50 text-slate-900 antialiased min-h-screen;
+    @apply bg-slate-50 text-slate-900 antialiased min-h-screen transition-colors duration-200;
+    @apply dark:bg-slate-950 dark:text-slate-100;
     font-family: 'Outfit', sans-serif;
   }
 }

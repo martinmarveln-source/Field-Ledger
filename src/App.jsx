@@ -15,7 +15,7 @@ import {
   CircleDollarSign, Crown, Home, UserPlus, Trash2, Loader2, RefreshCw,
   ArrowRight, Eye, EyeOff, CheckCircle2, XCircle, Clock, Settings,
   Search, FileText, KeyRound, Wallet, Smartphone, Fingerprint, MapPin, 
-  Edit, Activity, Navigation, FileCheck, Copy, Download, Target, Calendar, Send
+  Edit, Activity, Navigation, FileCheck, Copy, Download, Target, Calendar, Send, Grid, Moon, Sun, HelpCircle
 } from 'lucide-react';
 
 /* ---------------------------------- config ---------------------------------- */
@@ -538,7 +538,7 @@ export default function App() {
     const raw = await safeGet(`users:${phone}`, true);
     if (!raw) return { ok: false, error: 'No account found with that phone number.' };
     let u; try { u = JSON.parse(raw); } catch (e) { return { ok: false, error: 'Account data corrupted.' }; }
-    if (u.pin !== pin) return { ok: false, error: 'Incorrect PIN.' };
+    if (String(u.pin) !== String(pin)) return { ok: false, error: 'Incorrect PIN.' };
     if (u.active === false) return { ok: false, error: 'This account has been deactivated. Contact your Admin.' };
     setUser(u);
     await saveItem('last_phone', phone, false);
@@ -638,11 +638,11 @@ function AuthScreen({ onLogin, onSignup, users }) {
       {/* Top Navigation Bar */}
       <header className="w-full bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex justify-between items-center z-10">
         <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-slate-900 text-white flex items-center justify-center rounded-full font-bold text-xl tracking-tighter shadow-sm">
-            FL
+          <div className="w-10 h-10 bg-slate-900 text-white flex items-center justify-center rounded-full font-bold text-xl tracking-tighter shadow-sm overflow-hidden border border-slate-200">
+            <img src={`${import.meta.env.BASE_URL}tunak-logo.jpg`} alt="Logo" className="w-full h-full object-cover" />
           </div>
           <div className="text-left hidden sm:block">
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-none">FIELD LEDGER</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 leading-none">TUNAK LEAD CONSULTING</h1>
             <p className="text-xs text-slate-500 mt-1 font-medium">Registration & agent performance tracker</p>
           </div>
         </div>
@@ -770,17 +770,38 @@ function AuthScreen({ onLogin, onSignup, users }) {
 
 const NAV = {
   agent: [['log', 'Log Work', ClipboardList], ['stats', 'My Stats', TrendingUp], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
-  supervisor: [['team', 'My Team', Users], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
+  supervisor: [['team', 'My Team', Users], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
   ict: [['queue', 'Print Queue', Printer], ['profile', 'Profile', User]],
   store: [['requests', 'Requests', Boxes], ['profile', 'Profile', User]],
-  admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
-  super_admin: [['overview', 'Overview', Home], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  admin: [['overview', 'Overview', Home], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  super_admin: [['overview', 'Overview', Home], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
 };
 
 function Dashboard({ user, setUser, users, types, activities, logistics, storeItems, onLogout, refresh, refreshing, flash }) {
   const nav = NAV[user.role];
   const [view, setView] = useState(nav[0][0]);
   const roleDef = ROLE_MAP[user.role];
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+
+  const toggleDarkMode = () => {
+    if (isDarkMode) {
+      document.documentElement.classList.remove('dark');
+      setIsDarkMode(false);
+    } else {
+      document.documentElement.classList.add('dark');
+      setIsDarkMode(true);
+    }
+  };
+
+  const mobileNavLimit = 4;
+  const mainNavItems = nav.length > mobileNavLimit ? nav.slice(0, mobileNavLimit - 1) : nav;
+  const moreNavItems = nav.length > mobileNavLimit ? nav.slice(mobileNavLimit - 1) : [];
+
+  const handleNavClick = (id) => {
+    setView(id);
+    setShowMoreMenu(false);
+  };
 
   const ctx = { user, setUser, users, types, activities, logistics, storeItems, refresh, flash };
 
@@ -790,8 +811,10 @@ function Dashboard({ user, setUser, users, types, activities, logistics, storeIt
       <div className="hidden md:flex flex-col w-64 shrink-0 bg-slate-900 text-slate-300 border-r border-slate-800 shadow-2xl z-20">
         <div className="w-full flex flex-col h-full">
           <div className="p-6 flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-amber-400 to-amber-500 text-slate-900 flex items-center justify-center rounded-xl font-black text-xl shadow-lg">FL</div>
-            <div className="font-bold tracking-tight text-white text-lg leading-tight">FIELD<br/>LEDGER</div>
+            <div className="w-10 h-10 bg-white text-slate-900 flex items-center justify-center rounded-xl font-black text-xl shadow-lg overflow-hidden shrink-0">
+              <img src={`${import.meta.env.BASE_URL}tunak-logo.jpg`} alt="Logo" className="w-full h-full object-cover" />
+            </div>
+            <div className="font-bold tracking-tight text-white text-sm leading-tight uppercase">TUNAK LEAD<br/><span className="text-amber-400">CONSULTING</span></div>
           </div>
           
           <nav className="mt-4 px-4 flex-1 space-y-1.5">
@@ -807,9 +830,15 @@ function Dashboard({ user, setUser, users, types, activities, logistics, storeIt
             })}
           </nav>
 
-          <div className="p-4 border-t border-slate-800/50">
-            <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-white hover:bg-slate-800/50 transition-all">
-              <LogOut size={18} />Log Out
+          <div className="p-4 border-t border-slate-800/50 space-y-1.5">
+            <button onClick={() => window.open('https://wa.me/2348166341476', '_blank')} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-sky-400 hover:bg-slate-800/50 transition-all">
+              <HelpCircle size={18} /> ICT Support
+            </button>
+            <button onClick={toggleDarkMode} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-white hover:bg-slate-800/50 transition-all">
+              {isDarkMode ? <Sun size={18} className="text-amber-400" /> : <Moon size={18} />} {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+            </button>
+            <button onClick={onLogout} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold text-slate-400 hover:text-rose-400 hover:bg-slate-800/50 transition-all">
+              <LogOut size={18} /> Log Out
             </button>
           </div>
         </div>
@@ -861,16 +890,71 @@ function Dashboard({ user, setUser, users, types, activities, logistics, storeIt
 
       {/* mobile bottom nav */}
       <div className="md:hidden fixed bottom-0 left-0 right-0 flex bg-white/90 backdrop-blur-lg border-t border-slate-200 pb-safe z-40 shadow-[0_-4px_20px_rgb(0,0,0,0.05)]">
-        {nav.map(([id, label, Icon]) => {
+        {mainNavItems.map(([id, label, Icon]) => {
           const active = view === id;
           return (
-            <button key={id} onClick={() => setView(id)} className="flex-1 flex flex-col items-center gap-1 py-3 focus:outline-none">
+            <button key={id} onClick={() => handleNavClick(id)} className="flex-1 flex flex-col items-center gap-1 py-3 focus:outline-none">
               <Icon size={20} className={`transition-colors ${active ? 'text-amber-500' : 'text-slate-400'}`} />
               <span className={`text-[10px] font-bold transition-colors ${active ? 'text-slate-900' : 'text-slate-500'}`}>{label}</span>
             </button>
           );
         })}
+        
+        {moreNavItems.length > 0 && (
+          <button onClick={() => setShowMoreMenu(true)} className="flex-1 flex flex-col items-center gap-1 py-3 focus:outline-none">
+            <Grid size={20} className="text-slate-400" />
+            <span className="text-[10px] font-bold text-slate-500">More</span>
+          </button>
+        )}
       </div>
+
+      {/* mobile more options overlay */}
+      {showMoreMenu && (
+        <div className="md:hidden fixed inset-0 z-50 flex items-end justify-center">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowMoreMenu(false)}></div>
+          <div className="relative w-full max-w-md bg-slate-900 rounded-t-3xl p-6 pb-safe shadow-2xl animate-in slide-in-from-bottom border-t border-slate-800">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xs font-bold tracking-widest text-slate-400 uppercase">More Options</h3>
+              <button onClick={() => setShowMoreMenu(false)} className="p-2 -mr-2 text-slate-400 hover:text-white rounded-full bg-slate-800/50">
+                <X size={16} />
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-4 gap-y-8 gap-x-2">
+              {moreNavItems.map(([id, label, Icon]) => {
+                const active = view === id;
+                return (
+                  <button key={id} onClick={() => handleNavClick(id)} className="flex flex-col items-center gap-2 focus:outline-none group">
+                    <Icon size={24} className={active ? 'text-amber-400' : 'text-slate-400 group-hover:text-slate-300'} />
+                    <span className={`text-[10px] font-bold text-center ${active ? 'text-amber-400' : 'text-slate-400 group-hover:text-slate-300'}`}>{label}</span>
+                  </button>
+                );
+              })}
+              
+              <button onClick={toggleDarkMode} className="flex flex-col items-center gap-2 focus:outline-none group">
+                {isDarkMode ? (
+                  <Sun size={24} className="text-amber-400" />
+                ) : (
+                  <Moon size={24} className="text-slate-400 group-hover:text-slate-300" />
+                )}
+                <span className={`text-[10px] font-bold text-center ${isDarkMode ? 'text-amber-400' : 'text-slate-400 group-hover:text-slate-300'}`}>
+                  {isDarkMode ? 'Light' : 'Dark'}
+                </span>
+              </button>
+
+              <button onClick={() => window.open('https://wa.me/2348166341476', '_blank')} className="flex flex-col items-center gap-2 focus:outline-none group">
+                <HelpCircle size={24} className="text-sky-400" />
+                <span className="text-[10px] font-bold text-center text-sky-400 group-hover:text-sky-300">ICT Support</span>
+              </button>
+
+              <button onClick={onLogout} className="flex flex-col items-center gap-2 focus:outline-none group">
+                <LogOut size={24} className="text-rose-400" />
+                <span className="text-[10px] font-bold text-center text-rose-400 group-hover:text-rose-300">Log Out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -986,12 +1070,42 @@ function LiveVerification({ ctx }) {
         if (isFasterVerify) {
           if (normalizedData.first_name) normalizedData.firstname = normalizedData.first_name;
           if (normalizedData.middle_name) normalizedData.middlename = normalizedData.middle_name;
-          if (normalizedData.last_name) normalizedData.surname = normalizedData.last_name;
-          if (normalizedData.date_of_birth) normalizedData.dob = normalizedData.date_of_birth;
-          if (normalizedData.address) normalizedData.residence_address = normalizedData.address;
         }
 
-        setResult({ ...normalizedData, isModification: !!selectedService.serviceType, isStatusCheck: selectedService.id === 'nin-modification-status' });
+        // Map names and fields
+        if (normalizedData.first_name || normalizedData.firstName) normalizedData.firstname = normalizedData.first_name || normalizedData.firstName;
+        if (normalizedData.last_name || normalizedData.lastName) normalizedData.surname = normalizedData.last_name || normalizedData.lastName;
+        if (normalizedData.birthdate || normalizedData.dateOfBirth) normalizedData.dob = normalizedData.birthdate || normalizedData.dateOfBirth;
+        if (normalizedData.address || normalizedData.residentialAddress) normalizedData.residence_address = normalizedData.address || normalizedData.residentialAddress;
+        if (normalizedData.phoneNumber1) normalizedData.phone = normalizedData.phoneNumber1;
+
+        const isStatusCheck = data.verification_status !== 'completed' && data.verification_status !== 'verified';
+
+        setResult({ ...normalizedData, isModification: !!selectedService.serviceType, isStatusCheck });
+
+        // LOG TO LEDGER AUTOMATICALLY
+        const entry = {
+          id: uid(), agentPhone: user.phone, agentName: user.name, supervisorPhone: user.supervisorPhone || null,
+          typeId: selectedService.id, typeName: `Live Verify: ${selectedService.label}`, count: 1, date: new Date().toISOString().split('T')[0], note: 'API Verification',
+          paymentMethod: 'wallet',
+          isPartialPayment: false, debtors: [],
+          totalAmount: cost, amountPaid: cost, balance: 0,
+          createdAt: new Date().toISOString(), printStatus: null,
+          issuedAtmCard: false,
+          printFileUrls: [],
+          printFileNames: [],
+          printFiles: [{
+             url: null, // no pdf yet
+             filename: `${normalizedData.nin || normalizedData.tracking_id || selectedService.id}.json`,
+             extractedName: `${normalizedData.firstname || ''} ${normalizedData.surname || ''}`.trim(),
+             nin: normalizedData.nin || '',
+             dob: normalizedData.dob || '',
+             isVerifyResult: true,
+             verifyData: normalizedData
+          }]
+        };
+        await saveItem(`activities:${entry.id}`, entry, true);
+
         flash(data.message || 'Operation successful', 'green');
       } else {
         flash(data.message || 'Operation failed or not found', 'red');
@@ -1302,7 +1416,166 @@ function LiveVerification({ ctx }) {
   );
 }
 
-/* ----------------------------------- agent: log work ----------------------------------- */
+function UnifiedAgentLogTable({ activities, user, removeEntry }) {
+  const [search, setSearch] = useState('');
+  const [startDate, setStartDate] = useState(todayStr());
+  const [endDate, setEndDate] = useState(todayStr());
+
+  const mine = activities.filter(a => a.agentPhone === user.phone);
+  
+  // Filter by date range
+  const filteredEntries = mine.filter(a => {
+    const d = a.date || '';
+    if (startDate && d < startDate) return false;
+    if (endDate && d > endDate) return false;
+    return true;
+  });
+
+  // Flatten PDFs from all filtered entries
+  let flattenedFiles = [];
+  filteredEntries.forEach(a => {
+    if (a.printFiles && a.printFiles.length > 0) {
+      a.printFiles.forEach((f, idx) => {
+        flattenedFiles.push({
+          ...f,
+          entryId: a.id,
+          entryDate: a.date || a.createdAt,
+          entryTypeName: a.typeName,
+          isLegacy: false,
+          legacyIdx: -1
+        });
+      });
+    } else if (a.printFileUrls && a.printFileUrls.length > 0) {
+      a.printFileUrls.forEach((url, idx) => {
+        flattenedFiles.push({
+          url,
+          filename: a.printFileNames?.[idx] || 'document.pdf',
+          extractedName: (a.printFileNames?.[idx] || '').replace(/\.pdf$/i, ''),
+          nin: '',
+          dob: '',
+          isOwed: false,
+          amountPaid: 0,
+          proposedPrice: 0,
+          entryId: a.id,
+          entryDate: a.date || a.createdAt,
+          entryTypeName: a.typeName,
+          isLegacy: true,
+          legacyIdx: idx
+        });
+      });
+    }
+  });
+
+  // Apply search filter (Name or NIN)
+  if (search.trim() !== '') {
+    const lowerSearch = search.toLowerCase();
+    flattenedFiles = flattenedFiles.filter(f => 
+      (f.extractedName || f.filename || '').toLowerCase().includes(lowerSearch) || 
+      (f.nin || '').includes(lowerSearch)
+    );
+  }
+  
+  // Sort by entryDate descending
+  flattenedFiles.sort((x, y) => (y.entryDate || '').localeCompare(x.entryDate || ''));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row gap-4 mb-4 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+        <div className="flex-1">
+          <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1">Search Name / NIN</label>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+            <input 
+              type="text" 
+              placeholder="Search documents..." 
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full text-sm pl-9 pr-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all"
+            />
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1">Start Date</label>
+            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all" />
+          </div>
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-slate-500 tracking-wider mb-1">End Date</label>
+            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full text-sm px-3 py-2 rounded-lg border border-slate-200 bg-slate-50 focus:bg-white focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 outline-none transition-all" />
+          </div>
+        </div>
+      </div>
+
+      <Card className="overflow-hidden border border-slate-200">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left">
+            <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px] tracking-wider border-b border-slate-200">
+              <tr>
+                <th className="px-4 py-3">Date</th>
+                <th className="px-4 py-3">Name</th>
+                <th className="px-4 py-3">NIN</th>
+                <th className="px-4 py-3">D.O.B</th>
+                <th className="px-4 py-3">Payment Status</th>
+                <th className="px-4 py-3 text-center">Document</th>
+                <th className="px-4 py-3 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {flattenedFiles.length === 0 ? (
+                <tr>
+                  <td colSpan="7" className="px-4 py-8 text-center text-slate-500 font-medium">
+                    No documents found matching the current filters.
+                  </td>
+                </tr>
+              ) : (
+                flattenedFiles.map((f, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50 group">
+                    <td className="px-4 py-3 whitespace-nowrap text-slate-600 font-medium">
+                      {fmtDate(f.entryDate.split('T')[0])}
+                    </td>
+                    <td className="px-4 py-3 font-bold text-slate-900">{f.extractedName || f.filename || '—'}</td>
+                    <td className="px-4 py-3 text-slate-600 font-medium">{f.nin || '—'}</td>
+                    <td className="px-4 py-3 text-slate-600 font-medium">{f.dob || '—'}</td>
+                    <td className="px-4 py-3 text-slate-600 font-medium">
+                      {f.isOwed ? (
+                        <div className="flex flex-col">
+                          <span className="text-rose-600 font-bold">Owing</span>
+                          <span className="text-[10px] text-slate-500">Paid: {fmtNaira(Number(f.amountPaid) || 0)}</span>
+                          {f.proposedPrice && <span className="text-[10px] text-amber-600">Req: {fmtNaira(Number(f.proposedPrice))}</span>}
+                        </div>
+                      ) : (
+                        <span className="text-emerald-600 font-bold">Fully Paid</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      {f.url ? (
+                        <a href={`${f.url}?download=`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-700 hover:bg-amber-100 font-bold rounded transition-colors">
+                          <Download size={12} /> Download
+                        </a>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium">API Data</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                       <button onClick={() => {
+                          if (window.confirm("Warning: This deletes the ENTIRE entry batch this document belongs to. Proceed?")) {
+                            removeEntry(f.entryId);
+                          }
+                       }} title="Delete entire batch" className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors focus:outline-none opacity-0 group-hover:opacity-100">
+                         <Trash2 size={16} />
+                       </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 
 function AgentLog({ ctx }) {
   const { user, types, activities, refresh, flash } = ctx;
@@ -1335,6 +1608,7 @@ function AgentLog({ ctx }) {
     
     let uploadedUrls = [];
     let finalFileNames = [];
+    let finalPrintFiles = [];
     
     if (printRequested && pdfFiles.length > 0 && supabase) {
       for (const f of pdfFiles) {
@@ -1352,6 +1626,13 @@ function AgentLog({ ctx }) {
         const { data: urlData } = supabase.storage.from('print_files').getPublicUrl(filePath);
         uploadedUrls.push(urlData.publicUrl);
         finalFileNames.push(fName);
+        finalPrintFiles.push({
+          url: urlData.publicUrl,
+          filename: fName,
+          extractedName: f.extractedName || '',
+          nin: f.nin || '',
+          dob: f.dob || ''
+        });
       }
     }
     
@@ -1362,7 +1643,8 @@ function AgentLog({ ctx }) {
       createdAt: new Date().toISOString(), printStatus: printRequested ? 'pending' : null,
       issuedAtmCard,
       printFileUrls: uploadedUrls,
-      printFileNames: finalFileNames
+      printFileNames: finalFileNames,
+      printFiles: finalPrintFiles
     };
     await saveItem(`activities:${entry.id}`, entry, true);
     setCount(1); setNote(''); setIssuedAtmCard(false); setPdfFiles([]);
@@ -1406,6 +1688,10 @@ function AgentLog({ ctx }) {
         const firstMatch = text.match(/First\sName[\s:.]*([A-Za-z\-]+)/i);
         const middleMatch = text.match(/Middle\sName[\s:.]*([A-Za-z\-]+)/i);
         
+        let dobStr = '';
+        const dobMatch = text.match(/(?:Date\s+of\s+Birth|Date\s+de\s+naissance)[\s:.]*([0-9]{1,2}[\s-]+[A-Za-z]{3,4}[\s-]+[0-9]{4}|[0-9]{2}[\s\/-][0-9]{2}[\s\/-][0-9]{4}|[0-9]{4}[\s\/-][0-9]{2}[\s\/-][0-9]{2})/i);
+        if (dobMatch) dobStr = dobMatch[1].trim().replace(/\s+/g, '-');
+
         if (surMatch && (givenMatch || firstMatch)) {
            let given = '';
            if (givenMatch) given = givenMatch[1].replace(/,/g, '').trim();
@@ -1421,11 +1707,11 @@ function AgentLog({ ctx }) {
         const newName = `${cleanName || 'ID_Slip'}${finalNin ? '_' + finalNin : ''}.pdf`;
         
         const isImageOnly = text.trim().length < 20;
-        processedFiles.push({ id: uid(), original: file, newName, nin: finalNin, extractedName: nameStr, text, isImageOnly });
+        processedFiles.push({ id: uid(), original: file, newName, nin: finalNin, dob: dobStr, extractedName: nameStr, text, isImageOnly, isOwed: false, amountPaid: '', proposedPrice: '' });
         
       } catch (err) {
         console.error(err);
-        processedFiles.push({ id: uid(), original: file, newName: file.name, nin: '', extractedName: '', isImageOnly: true });
+        processedFiles.push({ id: uid(), original: file, newName: file.name, nin: '', dob: '', extractedName: '', isImageOnly: true, isOwed: false, amountPaid: '', proposedPrice: '' });
       }
     }
     
@@ -1514,9 +1800,14 @@ function AgentLog({ ctx }) {
                     <Field label="Detected Name">
                       <TextInput value={pdf.extractedName || ''} onChange={e => updatePdfFile(pdf.id, { extractedName: e.target.value, newName: `${e.target.value.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_${pdf.nin}.pdf`})} placeholder="Type name manually if missing" />
                     </Field>
-                    <Field label="Detected NIN">
-                      <TextInput value={pdf.nin || ''} onChange={e => updatePdfFile(pdf.id, { nin: e.target.value, newName: `${pdf.extractedName.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_${e.target.value}.pdf`})} placeholder="Type 11-digit NIN if missing" />
-                    </Field>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Field label="Detected NIN">
+                        <TextInput value={pdf.nin || ''} onChange={e => updatePdfFile(pdf.id, { nin: e.target.value, newName: `${pdf.extractedName.replace(/[^a-zA-Z0-9\s]/g, '').replace(/\s+/g, '_')}_${e.target.value}.pdf`})} placeholder="Type 11-digit NIN if missing" />
+                      </Field>
+                      <Field label="Date of Birth">
+                        <TextInput value={pdf.dob || ''} onChange={e => updatePdfFile(pdf.id, { dob: e.target.value })} placeholder="DD-MM-YYYY" />
+                      </Field>
+                    </div>
                     <div className="text-xs text-slate-500 mt-1 font-medium bg-slate-50 p-2 rounded">
                       File will be saved as: <strong className="text-slate-800 break-all">{pdf.newName}</strong>
                     </div>
@@ -1529,23 +1820,9 @@ function AgentLog({ ctx }) {
         <Btn onClick={submit} full disabled={busy} size="lg" icon={busy ? Loader2 : Check}>{busy ? 'Saving…' : 'Save Entry'}</Btn>
       </Card>
 
-      <SectionTitle>Today's Entries</SectionTitle>
-      {today.length === 0 && <Empty text="No entries logged yet today." />}
+      <SectionTitle>Saved Entries</SectionTitle>
       <div className="space-y-3">
-        {today.map(a => (
-          <Card key={a.id} className="p-4 flex items-center justify-between gap-4 group">
-            <div className="min-w-0">
-              <div className="text-base font-bold text-slate-900 truncate mb-1">{a.typeName} <span className="font-medium text-slate-400 ml-1">× {a.count}</span></div>
-              <div className="text-xs font-medium text-slate-500 truncate flex items-center gap-1.5">
-                <Clock size={12}/>{fmtTime(a.createdAt)} 
-                {a.note ? `· ${a.note}` : ''}
-                {a.issuedAtmCard ? <span className="ml-1 text-emerald-600 font-bold tracking-wide">· ATM Card</span> : ''}
-                {a.printStatus ? <span className="ml-1 text-amber-600 font-bold tracking-wide">· Print</span> : ''}
-              </div>
-            </div>
-            <button onClick={() => removeEntry(a.id)} className="p-2 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-rose-500/30"><Trash2 size={18} /></button>
-          </Card>
-        ))}
+        <UnifiedAgentLogTable activities={activities} user={user} removeEntry={removeEntry} />
       </div>
     </div>
   );
