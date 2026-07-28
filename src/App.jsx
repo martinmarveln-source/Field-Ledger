@@ -75,7 +75,8 @@ async function safeGet(key, shared) {
     if (supabase) {
       const { data, error } = await supabase.from('kv_store').select('value').eq('key', key).maybeSingle();
       if (!error && data) return typeof data.value === 'string' ? data.value : data.value;
-      return null;
+      if (error) console.error('Supabase safeGet error:', error.message);
+      // Fallback to local storage if not found in Supabase or error occurred
     }
     let r = window.storage ? await window.storage.get(key, shared) : localStorage.getItem(key);
     if (r && typeof r === 'object' && 'value' in r) return r.value;
@@ -95,7 +96,9 @@ async function listAll(prefix, shared) {
             out.push(parsed);
           } catch(e) {}
         }
-        return out;
+        if (out.length > 0) return out;
+      } else if (error) {
+        console.error('Supabase listAll error:', error.message);
       }
     }
     
