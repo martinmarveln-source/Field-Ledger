@@ -58,6 +58,19 @@ const fmtDate = (d) => {
 const fmtTime = (iso) => { try { return new Date(iso).toLocaleTimeString('en-NG', { hour: '2-digit', minute: '2-digit' }); } catch (e) { return ''; } };
 const initials = (name) => (name || '?').trim().split(/\s+/).slice(0, 2).map(s => s[0]).join('').toUpperCase();
 
+// Securely hash a PIN using SHA-256 (Web Crypto API)
+async function hashPin(pin) {
+  try {
+    const msgBuffer = new TextEncoder().encode(String(pin).trim());
+    const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    // Fallback: return plain pin if Web Crypto not available
+    return String(pin).trim();
+  }
+}
+
 function isInRange(dateStr, range) {
   if (range === 'all') return true;
   const d = new Date(dateStr + 'T00:00:00');
@@ -564,8 +577,19 @@ export default function App() {
     if (!u || typeof u !== 'object') return { ok: false, error: 'Account data corrupted. Please contact ICT support.' };
     const storedPin = String(u.pin || '').trim();
     const enteredPin = String(pin || '').trim();
-    console.log('Login debug - stored PIN length:', storedPin.length, '| entered PIN length:', enteredPin.length);
-    if (storedPin !== enteredPin) return { ok: false, error: 'Incorrect PIN.' };
+    
+    // Support both hashed PINs (pinHashed: true from old app) and plain text PINs
+    let pinMatch = false;
+    if (u.pinHashed === true) {
+      // Old-style SHA-256 hashed PIN — hash the entered PIN and compare
+      const hashed = await hashPin(enteredPin);
+      pinMatch = hashed === storedPin;
+    } else {
+      // Plain text PIN comparison
+      pinMatch = storedPin === enteredPin;
+    }
+    
+    if (!pinMatch) return { ok: false, error: 'Incorrect PIN.' };
     if (u.active === false) return { ok: false, error: 'This account has been deactivated. Contact your Admin.' };
     setUser(u);
     await saveItem('last_phone', phone, false);
@@ -578,8 +602,9 @@ export default function App() {
     if (existing) return { ok: false, error: 'That phone number is already registered. Please log in instead.' };
     const roleDef = ROLE_MAP[data.role];
     if (roleDef.needsCode && data.code !== ACCESS_CODE) return { ok: false, error: 'Incorrect agency access code for this role.' };
+    const hashedPin = await hashPin(data.pin);
     const newUser = {
-      phone: data.phone, name: data.name, pin: data.pin, role: data.role,
+      phone: data.phone, name: data.name, pin: hashedPin, pinHashed: true, role: data.role,
       supervisorPhone: data.role === 'agent' ? (data.supervisorPhone || null) : undefined,
       active: true, createdAt: new Date().toISOString(), balance: 0,
     };
@@ -589,6 +614,7 @@ export default function App() {
     await loadAll();
     return { ok: true };
   };
+
 
   const logout = async () => { setUser(null); await saveItem('last_phone', '', false); };
 
