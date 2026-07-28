@@ -151,16 +151,19 @@ async function listAll(prefix, shared) {
 
 async function saveItem(key, obj, shared) {
   try {
-    const val = typeof obj === 'string' ? obj : JSON.stringify(obj);
+    // For localStorage/window.storage we always use a JSON string
+    const strVal = typeof obj === 'string' ? obj : JSON.stringify(obj);
+    // For Supabase JSONB column, pass the parsed object directly (not a string)
+    const jsonVal = typeof obj === 'string' ? (() => { try { return JSON.parse(obj); } catch(e) { return obj; } })() : obj;
     if (supabase) {
-      const { error } = await supabase.from('kv_store').upsert({ key, value: val });
+      const { error } = await supabase.from('kv_store').upsert({ key, value: jsonVal });
       if (!error) return true;
-      console.error('Supabase upsert error', error);
+      console.error('Supabase upsert error', error.message, '— falling back to localStorage');
     }
     if (window.storage) {
-      await window.storage.set(key, val, shared);
+      await window.storage.set(key, strVal, shared);
     } else {
-      localStorage.setItem(key, val);
+      localStorage.setItem(key, strVal);
     }
     return true;
   } catch (e) { return false; }
