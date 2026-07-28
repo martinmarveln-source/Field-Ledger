@@ -1095,7 +1095,8 @@ function LiveVerification({ ctx }) {
         }
       }
 
-      const proxyPath = isFasterVerify ? '/fasterverify-api' : '/checkmyninbvn-api';
+      // In production (GitHub Pages), local Vite proxies don't work, so hit the API directly
+      const proxyPath = isFasterVerify ? 'https://fasterverify.com.ng/api/v1' : 'https://checkmyninbvn.com.ng/api';
       const headers = isFasterVerify 
         ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }
         : { 'Content-Type': 'application/json', 'x-api-key': key };
