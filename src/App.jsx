@@ -1097,9 +1097,13 @@ function LiveVerification({ ctx }) {
       }
 
       if (isFasterVerify && supabase) {
-        const action = selectedService.endpoint.replace(/\//g, '_').replace(/-/g, '_');
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('api-proxy', {
-          body: { action, payload, idempotency_key: uid() }
+          body: { 
+            provider: 'fasterverify', 
+            endpoint: selectedService.endpoint, 
+            payload: payload, 
+            idempotency_key: uid() 
+          }
         });
 
         if (edgeError) {
