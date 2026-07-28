@@ -1,4 +1,5 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,8 +12,69 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+
+
   try {
-    const { provider, method, endpoint, payload, queryParams } = await req.json();
+    const { provider, method, endpoint, payload, queryParams, idempotency_key } = await req.json();
+
+    // --- IDEMPOTENCY CHECK ---
+    // WHY: Prevents idempotency key reuse across different request payloads 
+    // from being silently treated as a duplicate of an unrelated request.
+    if (idempotency_key) {
+      const authHeader = req.headers.get('Authorization');
+      if (!authHeader) {
+        return new Response(JSON.stringify({ error: 'Missing Authorization header for idempotency' }), { status: 401, headers: corsHeaders });
+      }
+      
+      const supabaseClient = createClient(
+        Deno.env.get('SUPABASE_URL') ?? '',
+        Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+        { global: { headers: { Authorization: authHeader } } }
+      );
+      
+      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+      if (authError || !user) {
+        return new Response(JSON.stringify({ error: 'Unauthorized for idempotency check' }), { status: 401, headers: corsHeaders });
+      }
+
+      const sortObjectKeys = (obj: any): any => {
+        if (typeof obj !== 'object' || obj === null) return obj;
+        if (Array.isArray(obj)) return obj.map(sortObjectKeys);
+        return Object.keys(obj).sort().reduce((result: any, key: string) => {
+          result[key] = sortObjectKeys(obj[key]);
+          return result;
+        }, {});
+      };
+
+      const canonicalPayload = JSON.stringify(sortObjectKeys(payload || {}));
+      const hashData = new TextEncoder().encode(`${endpoint}|${canonicalPayload}`);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', hashData);
+      const payloadHash = Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      const { data: idempCheck, error: idempError } = await supabaseClient.rpc(
+        'check_idempotency', 
+        { p_key: idempotency_key, p_user_id: user.id, p_payload_hash: payloadHash }
+      );
+
+      if (idempError || !idempCheck) {
+        console.error('Idempotency RPC Error:', idempError);
+        return new Response(JSON.stringify({ error: 'Internal server error during idempotency check' }), { status: 500, headers: corsHeaders });
+      }
+
+      if (idempCheck.allowed === false) {
+        if (idempCheck.reason === 'key_reuse_mismatch') {
+          return new Response(JSON.stringify({ error: 'Idempotency key already used with different request data. Use a new key for a new request.' }), { status: 409, headers: corsHeaders });
+        }
+        return new Response(JSON.stringify({ error: 'Duplicate request rejected' }), { status: 409, headers: corsHeaders });
+      }
+
+      if (idempCheck.reason === 'retry_completed') {
+         return new Response(JSON.stringify({ error: 'Request already completed successfully previously. Please check ledger.' }), { status: 409, headers: corsHeaders });
+      }
+    }
+    // --- END IDEMPOTENCY CHECK ---
 
     if (!provider || !endpoint) {
       throw new Error('Provider and endpoint are required');
