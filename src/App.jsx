@@ -1087,6 +1087,7 @@ function LiveVerification({ ctx }) {
 
     try {
       let res;
+      let data;
       const cost = selectedService.price;
       if (cost > 0) {
         if ((user.balance || 0) < cost) {
@@ -1095,26 +1096,45 @@ function LiveVerification({ ctx }) {
         }
       }
 
-      // In production (GitHub Pages), local Vite proxies don't work, so hit the API directly
-      const proxyPath = isFasterVerify ? 'https://fasterverify.com.ng/api/v1' : 'https://checkmyninbvn.com.ng/api';
-      const headers = isFasterVerify 
-        ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }
-        : { 'Content-Type': 'application/json', 'x-api-key': key };
+      if (isFasterVerify && supabase) {
+        const action = selectedService.endpoint.replace(/\//g, '_').replace(/-/g, '_');
+        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('api-proxy', {
+          body: { action, payload, idempotency_key: uid() }
+        });
 
-      if (selectedService.method === 'GET') {
-        const queryParams = new URLSearchParams(payload).toString();
-        res = await fetch(`${proxyPath}/${selectedService.endpoint}?${queryParams}`, {
-          headers: isFasterVerify ? { 'Authorization': `Bearer ${key}` } : { 'x-api-key': key }
-        });
+        if (edgeError) {
+           console.error("Edge Function Error:", edgeError);
+           // Supabase sometimes puts the response body in the error object if it's a 4xx/5xx
+           try {
+             const parsedErr = JSON.parse(edgeError.message || edgeError.context);
+             data = parsedErr; 
+           } catch {
+             data = { message: edgeError.message || 'API Proxy Failed', success: false };
+           }
+           res = { ok: false };
+        } else {
+           data = edgeData;
+           res = { ok: true };
+        }
       } else {
-        res = await fetch(`${proxyPath}/${selectedService.endpoint}`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload)
-        });
+        // Fallback for checkmynin
+        const proxyPath = isFasterVerify ? 'https://fasterverify.com.ng/api/v1' : 'https://checkmyninbvn.com.ng/api';
+        const headers = isFasterVerify 
+          ? { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` }
+          : { 'Content-Type': 'application/json', 'x-api-key': key };
+
+        if (selectedService.method === 'GET') {
+          const queryParams = new URLSearchParams(payload).toString();
+          res = await fetch(`${proxyPath}/${selectedService.endpoint}?${queryParams}`, { headers });
+        } else {
+          res = await fetch(`${proxyPath}/${selectedService.endpoint}`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload)
+          });
+        }
+        data = await res.json();
       }
-      
-      const data = await res.json();
       const isSuccess = data.status === 'success' || data.success === true || data.status === true || data.data || data.photo || data.slip_image || data.slip;
       const shouldCharge = isFasterVerify ? res.ok : isSuccess; // FasterVerify charges per hit (even if not found)
 
