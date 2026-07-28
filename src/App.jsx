@@ -77,14 +77,22 @@ async function safeGet(key, shared) {
   try {
     if (supabase) {
       const { data, error } = await supabase.from('kv_store').select('value').eq('key', key).maybeSingle();
-      if (!error && data) return typeof data.value === 'string' ? data.value : data.value;
+      if (!error && data !== null && data !== undefined) {
+        const val = data.value;
+        // Supabase may return JSONB as a parsed object OR TEXT as a string.
+        // Normalize to always return a JSON string so callers can JSON.parse consistently.
+        if (val === null || val === undefined) return null;
+        if (typeof val === 'string') return val;
+        if (typeof val === 'object') return JSON.stringify(val);
+        return String(val);
+      }
       if (error) console.error('Supabase safeGet error:', error.message);
       // Fallback to local storage if not found in Supabase or error occurred
     }
     let r = window.storage ? await window.storage.get(key, shared) : localStorage.getItem(key);
     if (r && typeof r === 'object' && 'value' in r) return r.value;
     return r;
-  } catch (e) { return null; }
+  } catch (e) { console.error('safeGet exception:', e); return null; }
 }
 
 async function listAll(prefix, shared) {
@@ -94,9 +102,12 @@ async function listAll(prefix, shared) {
       const { data, error } = await supabase.from('kv_store').select('value').like('key', `${prefix}%`);
       if (!error && data) {
         for (const row of data) {
-          try { 
-            const parsed = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
-            out.push(parsed);
+          try {
+            // Handle both JSONB (object) and TEXT (string) column types
+            const parsed = typeof row.value === 'string'
+              ? JSON.parse(row.value)
+              : (typeof row.value === 'object' ? row.value : JSON.parse(String(row.value)));
+            if (parsed) out.push(parsed);
           } catch(e) {}
         }
         if (out.length > 0) return out;
@@ -543,8 +554,18 @@ export default function App() {
   const login = async (phone, pin) => {
     const raw = await safeGet(`users:${phone}`, true);
     if (!raw) return { ok: false, error: 'No account found with that phone number.' };
-    let u; try { u = JSON.parse(raw); } catch (e) { return { ok: false, error: 'Account data corrupted.' }; }
-    if (String(u.pin) !== String(pin)) return { ok: false, error: 'Incorrect PIN.' };
+    let u;
+    try {
+      // Handle both string (TEXT column) and object (JSONB column) returns
+      u = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (e) {
+      return { ok: false, error: 'Account data corrupted. Please contact ICT support.' };
+    }
+    if (!u || typeof u !== 'object') return { ok: false, error: 'Account data corrupted. Please contact ICT support.' };
+    const storedPin = String(u.pin || '').trim();
+    const enteredPin = String(pin || '').trim();
+    console.log('Login debug - stored PIN length:', storedPin.length, '| entered PIN length:', enteredPin.length);
+    if (storedPin !== enteredPin) return { ok: false, error: 'Incorrect PIN.' };
     if (u.active === false) return { ok: false, error: 'This account has been deactivated. Contact your Admin.' };
     setUser(u);
     await saveItem('last_phone', phone, false);
