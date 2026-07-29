@@ -946,7 +946,7 @@ function Dashboard({ user, setUser, users, types, activities, logistics, storeIt
     setShowMoreMenu(false);
   };
 
-  const ctx = { user, setUser, users, types, activities, logistics, storeItems, refresh, flash };
+  const ctx = { user, setUser, users, types, activities, logistics, storeItems, refresh, flash, isOnline };
 
   return (
     <div className="flex min-h-screen bg-slate-50 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-amber-100/40 via-slate-50 to-slate-100">
