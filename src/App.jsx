@@ -86,21 +86,61 @@ function isInRange(dateStr, range) {
 
 /* ------------------------------- storage layer ------------------------------- */
 
+function getOfflineQueue() {
+  try {
+    return JSON.parse(localStorage.getItem('offline_sync_queue')) || [];
+  } catch (e) { return []; }
+}
+
+function saveOfflineQueue(queue) {
+  localStorage.setItem('offline_sync_queue', JSON.stringify(queue));
+}
+
+function addToSyncQueue(op) {
+  const queue = getOfflineQueue();
+  queue.push({ ...op, timestamp: Date.now() });
+  saveOfflineQueue(queue);
+}
+
+export async function processSyncQueue() {
+  if (!supabase || !navigator.onLine) return;
+  const queue = getOfflineQueue();
+  if (queue.length === 0) return;
+  
+  const remaining = [];
+  for (const op of queue) {
+    try {
+      if (op.type === 'upsert') {
+        const { error } = await supabase.from('kv_store').upsert({ key: op.key, value: op.value });
+        if (error) remaining.push(op);
+      } else if (op.type === 'delete') {
+        const { error } = await supabase.from('kv_store').delete().eq('key', op.key);
+        if (error) remaining.push(op);
+      }
+    } catch (e) {
+      remaining.push(op);
+    }
+  }
+  saveOfflineQueue(remaining);
+}
+
 async function safeGet(key, shared) {
   try {
+    if (!navigator.onLine) {
+      let r = window.storage ? await window.storage.get(key, shared) : localStorage.getItem(key);
+      if (r && typeof r === 'object' && 'value' in r) return r.value;
+      return r;
+    }
+
     if (supabase) {
       const { data, error } = await supabase.from('kv_store').select('value').eq('key', key).maybeSingle();
       if (!error && data !== null && data !== undefined) {
         const val = data.value;
-        // Supabase may return JSONB as a parsed object OR TEXT as a string.
-        // Normalize to always return a JSON string so callers can JSON.parse consistently.
         if (val === null || val === undefined) return null;
         if (typeof val === 'string') return val;
         if (typeof val === 'object') return JSON.stringify(val);
         return String(val);
       }
-      if (error) console.error('Supabase safeGet error:', error.message);
-      // Fallback to local storage if not found in Supabase or error occurred
     }
     let r = window.storage ? await window.storage.get(key, shared) : localStorage.getItem(key);
     if (r && typeof r === 'object' && 'value' in r) return r.value;
@@ -111,12 +151,11 @@ async function safeGet(key, shared) {
 async function listAll(prefix, shared) {
   try {
     const out = [];
-    if (supabase) {
+    if (navigator.onLine && supabase) {
       const { data, error } = await supabase.from('kv_store').select('value').like('key', `${prefix}%`);
       if (!error && data) {
         for (const row of data) {
           try {
-            // Handle both JSONB (object) and TEXT (string) column types
             const parsed = typeof row.value === 'string'
               ? JSON.parse(row.value)
               : (typeof row.value === 'object' ? row.value : JSON.parse(String(row.value)));
@@ -124,8 +163,6 @@ async function listAll(prefix, shared) {
           } catch(e) {}
         }
         if (out.length > 0) return out;
-      } else if (error) {
-        console.error('Supabase listAll error:', error.message);
       }
     }
     
@@ -140,7 +177,8 @@ async function listAll(prefix, shared) {
       }
     }
     for (const k of keys) {
-      const v = await safeGet(k, shared);
+      let v = window.storage ? await window.storage.get(k, shared) : localStorage.getItem(k);
+      if (v && typeof v === 'object' && 'value' in v) v = v.value;
       if (v) {
         try { out.push(JSON.parse(v)); } catch (e) {}
       }
@@ -151,19 +189,23 @@ async function listAll(prefix, shared) {
 
 async function saveItem(key, obj, shared) {
   try {
-    // For localStorage/window.storage we always use a JSON string
     const strVal = typeof obj === 'string' ? obj : JSON.stringify(obj);
-    // For Supabase JSONB column, pass the parsed object directly (not a string)
     const jsonVal = typeof obj === 'string' ? (() => { try { return JSON.parse(obj); } catch(e) { return obj; } })() : obj;
-    if (supabase) {
-      const { error } = await supabase.from('kv_store').upsert({ key, value: jsonVal });
-      if (!error) return true;
-      console.error('Supabase upsert error', error.message, '— falling back to localStorage');
-    }
+    
     if (window.storage) {
       await window.storage.set(key, strVal, shared);
     } else {
       localStorage.setItem(key, strVal);
+    }
+
+    if (supabase) {
+      if (navigator.onLine) {
+        supabase.from('kv_store').upsert({ key, value: jsonVal }).then(({ error }) => {
+          if (error) addToSyncQueue({ type: 'upsert', key, value: jsonVal });
+        }).catch(() => addToSyncQueue({ type: 'upsert', key, value: jsonVal }));
+      } else {
+        addToSyncQueue({ type: 'upsert', key, value: jsonVal });
+      }
     }
     return true;
   } catch (e) { return false; }
@@ -171,14 +213,20 @@ async function saveItem(key, obj, shared) {
 
 async function deleteItem(key, shared) {
   try {
-    if (supabase) {
-      const { error } = await supabase.from('kv_store').delete().eq('key', key);
-      if (!error) return true;
-    }
     if (window.storage) {
       await window.storage.delete(key, shared);
     } else {
       localStorage.removeItem(key);
+    }
+
+    if (supabase) {
+      if (navigator.onLine) {
+        supabase.from('kv_store').delete().eq('key', key).then(({ error }) => {
+          if (error) addToSyncQueue({ type: 'delete', key });
+        }).catch(() => addToSyncQueue({ type: 'delete', key }));
+      } else {
+        addToSyncQueue({ type: 'delete', key });
+      }
     }
     return true;
   } catch (e) { return false; }
@@ -528,6 +576,27 @@ export default function App() {
   const [storeItems, setStoreItems] = useState(['NIN Capture Forms', 'SIM Starter Packs']);
   const [toast, setToast] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      setIsOnline(true);
+      processSyncQueue();
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    if (navigator.onLine) {
+      processSyncQueue();
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   const flash = useCallback((msg, tone = 'default') => {
     setToast({ msg, tone });
@@ -636,31 +705,38 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-amber-200">
-      {toast && (
-        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-sm font-bold flex items-center gap-2 transition-all transform animate-in fade-in slide-in-from-top-4 backdrop-blur-md border ${
-            toast.tone === 'red' ? 'bg-rose-500/90 text-white border-rose-600/50' : 
-            toast.tone === 'green' ? 'bg-emerald-500/90 text-white border-emerald-600/50' : 
-            'bg-slate-900/90 text-white border-slate-800'
-          }`}>
-          {toast.tone === 'red' ? <XCircle size={16} /> : toast.tone === 'green' ? <CheckCircle2 size={16} /> : null}
-          {toast.msg}
+      {!isOnline && (
+        <div className="bg-slate-900 text-amber-400 text-center py-1 text-xs font-bold uppercase tracking-widest fixed top-0 w-full z-[100] shadow-md flex items-center justify-center gap-2">
+          <Activity size={14} /> Offline Mode (Features Limited)
         </div>
       )}
-      {!user ? (
-        <AuthScreen onLogin={login} onSignup={signup} users={users} />
-      ) : (
-        <Dashboard
-          user={user} setUser={setUser} users={users} types={types} activities={activities}
-          logistics={logistics} storeItems={storeItems} onLogout={logout} refresh={loadAll} refreshing={refreshing} flash={flash}
-        />
-      )}
+      <div className={!isOnline ? "pt-6" : ""}>
+        {toast && (
+          <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-sm font-bold flex items-center gap-2 transition-all transform animate-in fade-in slide-in-from-top-4 backdrop-blur-md border ${
+              toast.tone === 'red' ? 'bg-rose-500/90 text-white border-rose-600/50' : 
+              toast.tone === 'green' ? 'bg-emerald-500/90 text-white border-emerald-600/50' : 
+              'bg-slate-900/90 text-white border-slate-800'
+            }`}>
+            {toast.tone === 'red' ? <XCircle size={16} /> : toast.tone === 'green' ? <CheckCircle2 size={16} /> : null}
+            {toast.msg}
+          </div>
+        )}
+        {!user ? (
+          <AuthScreen onLogin={login} onSignup={signup} users={users} isOnline={isOnline} />
+        ) : (
+          <Dashboard
+            user={user} setUser={setUser} users={users} types={types} activities={activities}
+            logistics={logistics} storeItems={storeItems} onLogout={logout} refresh={loadAll} refreshing={refreshing} flash={flash} isOnline={isOnline}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
 /* ---------------------------------- auth screen --------------------------------- */
 
-function AuthScreen({ onLogin, onSignup, users }) {
+function AuthScreen({ onLogin, onSignup, users, isOnline }) {
   const [mode, setMode] = useState('login');
   const [phone, setPhone] = useState('');
   const [pin, setPin] = useState('');
@@ -815,7 +891,13 @@ function AuthScreen({ onLogin, onSignup, users }) {
 
               {err && <div className="flex items-center gap-1.5 text-sm text-red-600 bg-red-50 p-3 rounded-lg mt-2"><AlertCircle size={16} />{err}</div>}
               
-              <button type="submit" disabled={busy} className="w-full mt-4 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-xl shadow-sm transition-all flex items-center justify-center space-x-2 disabled:opacity-50">
+              {!isOnline && (
+                <div className="flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 p-3 rounded-lg border border-amber-200 mt-2">
+                  <Activity size={16} /> You must be online to create a new account.
+                </div>
+              )}
+
+              <button type="submit" disabled={busy || !isOnline} className="w-full mt-4 bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-xl shadow-sm transition-all flex items-center justify-center space-x-2 disabled:opacity-50">
                 <span>{busy ? 'Creating account…' : 'Create Account'}</span>
                 {!busy && <ArrowRight size={18} strokeWidth={2.5} />}
               </button>
@@ -838,7 +920,7 @@ const NAV = {
   super_admin: [['overview', 'Overview', Home], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
 };
 
-function Dashboard({ user, setUser, users, types, activities, logistics, storeItems, onLogout, refresh, refreshing, flash }) {
+function Dashboard({ user, setUser, users, types, activities, logistics, storeItems, onLogout, refresh, refreshing, flash, isOnline }) {
   const nav = NAV[user.role];
   const [view, setView] = useState(nav[0][0]);
   const roleDef = ROLE_MAP[user.role];
@@ -1366,8 +1448,14 @@ function LiveVerification({ ctx }) {
                 </div>
               )}
               
+              {!ctx.isOnline && (
+                <div className="flex items-center gap-1.5 text-sm text-amber-700 bg-amber-50 p-3 rounded-lg border border-amber-200 mt-2">
+                  <Activity size={16} /> Live verification is not available offline.
+                </div>
+              )}
+
               <div className="pt-4">
-                <Btn type="submit" full disabled={busy} size="lg" icon={busy ? Loader2 : CheckCircle2}>
+                <Btn type="submit" full disabled={busy || !ctx.isOnline} size="lg" icon={busy ? Loader2 : CheckCircle2}>
                   {busy ? 'Processing via API…' : `Submit ${selectedService.label}`}
                 </Btn>
               </div>
@@ -2878,20 +2966,26 @@ function WalletView({ ctx }) {
           <h3 className="text-lg font-bold text-slate-900 mb-2">Top Up Balance</h3>
           <p className="text-sm text-slate-500 mb-6">Deposit funds instantly using your ATM card or bank transfer via Paystack.</p>
           
+          {!ctx.isOnline && (
+            <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium rounded-lg flex items-center gap-2">
+              <Activity size={16} /> Online connection required for top ups.
+            </div>
+          )}
+
           <form onSubmit={handleTopup} className="space-y-4">
             <Field label="Deposit Amount (₦)">
-              <TextInput type="number" min="100" step="100" placeholder="e.g. 1000" value={amount} onChange={e => setAmount(e.target.value)} required className="text-lg font-bold" />
+              <TextInput type="number" min="100" step="100" placeholder="e.g. 1000" value={amount} onChange={e => setAmount(e.target.value)} required className="text-lg font-bold" disabled={!ctx.isOnline} />
             </Field>
             
             <div className="grid grid-cols-3 gap-2 mb-4">
               {[500, 1000, 5000].map(val => (
-                <button type="button" key={val} onClick={() => setAmount(val.toString())} className="py-2 rounded-lg border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 hover:border-amber-300 hover:text-amber-600 transition-colors">
+                <button type="button" key={val} onClick={() => setAmount(val.toString())} disabled={!ctx.isOnline} className="py-2 rounded-lg border border-slate-200 text-sm font-bold text-slate-600 hover:bg-slate-50 hover:border-amber-300 hover:text-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                   +₦{val}
                 </button>
               ))}
             </div>
 
-            <Btn type="submit" className="w-full h-12 text-base shadow-lg" icon={CircleDollarSign}>
+            <Btn type="submit" disabled={!ctx.isOnline} className="w-full h-12 text-base shadow-lg" icon={CircleDollarSign}>
               Pay with Paystack
             </Btn>
           </form>
