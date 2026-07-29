@@ -1109,7 +1109,7 @@ function Dashboard({ user, setUser, users, types, activities, logistics, storeIt
 /* ----------------------------------- LIVE VERIFICATION ----------------------------------- */
 
 function LiveVerification({ ctx }) {
-  const { types, user, refresh, flash } = ctx;
+  const { types, user, setUser, refresh, flash } = ctx;
   const [selectedService, setSelectedService] = useState(null);
   const [formData, setFormData] = useState({});
   const [busy, setBusy] = useState(false);
