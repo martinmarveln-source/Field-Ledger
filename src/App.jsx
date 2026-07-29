@@ -1106,6 +1106,80 @@ function Dashboard({ user, setUser, users, types, activities, logistics, storeIt
   );
 }
 
+/* ----------------------------------- SLIP GENERATOR ----------------------------------- */
+
+async function generateSlip(data, slipType) {
+  if (!slipType || slipType === 'information' || slipType === '') return null;
+  
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    img.crossOrigin = "Anonymous";
+    
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+      
+      ctx.fillStyle = '#000000';
+      ctx.textBaseline = 'top';
+      
+      const drawTextAndResolve = () => {
+        if (slipType === 'premium') {
+           ctx.font = 'bold 22px Arial';
+           ctx.fillText((data.surname || '').toUpperCase(), 350, 240);
+           const firstNames = `${data.firstname || ''} ${data.middlename || ''}`.trim().toUpperCase();
+           ctx.fillText(firstNames, 350, 310);
+           
+           ctx.font = 'bold 18px Arial';
+           ctx.fillText(data.dob || '', 350, 385);
+           const isMale = data.gender === 'MALE' || data.gender === 'M' || data.gender?.toLowerCase() === 'male';
+           ctx.fillText(isMale ? 'M' : (data.gender ? 'F' : ''), 580, 385);
+           
+           ctx.font = 'bold 36px Arial';
+           const ninStr = data.nin || '';
+           const fmtNin = ninStr.length === 11 ? `${ninStr.slice(0,4)} ${ninStr.slice(4,7)} ${ninStr.slice(7)}` : ninStr;
+           // Hacky letter spacing for canvas
+           let currentX = 230;
+           for(let i=0; i<fmtNin.length; i++) {
+              ctx.fillText(fmtNin[i], currentX, 450);
+              currentX += ctx.measureText(fmtNin[i]).width + 4; // 4px spacing
+           }
+        } else {
+           // Default fallback for standard, regular, vnin
+           ctx.font = 'bold 20px Arial';
+           ctx.fillText((data.surname || '').toUpperCase(), 250, 150);
+           ctx.fillText((data.firstname || '').toUpperCase(), 250, 200);
+           ctx.fillText(data.dob || '', 250, 250);
+           ctx.font = 'bold 24px Arial';
+           ctx.fillText(data.nin || '', 250, 300);
+        }
+        resolve(canvas.toDataURL('image/jpeg', 0.9));
+      };
+
+      if (data.photo) {
+        const photoImg = new Image();
+        photoImg.crossOrigin = "Anonymous";
+        photoImg.onload = () => {
+          if (slipType === 'premium') {
+             ctx.drawImage(photoImg, 55, 200, 175, 225); 
+          } else {
+             ctx.drawImage(photoImg, 50, 150, 150, 180); 
+          }
+          drawTextAndResolve();
+        };
+        photoImg.onerror = () => drawTextAndResolve();
+        photoImg.src = data.photo.startsWith('data:') ? data.photo : `data:image/jpeg;base64,${data.photo}`;
+      } else {
+         drawTextAndResolve();
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = `${import.meta.env.BASE_URL}previews/${slipType}.png`;
+  });
+}
+
 /* ----------------------------------- LIVE VERIFICATION ----------------------------------- */
 
 function LiveVerification({ ctx }) {
@@ -1273,6 +1347,15 @@ function LiveVerification({ ctx }) {
         if (normalizedData.phoneNumber1) normalizedData.phone = normalizedData.phoneNumber1;
 
         const isStatusCheck = data.verification_status !== 'completed' && data.verification_status !== 'verified';
+        
+        // --- SLIP GENERATOR INJECTION ---
+        if (formData.slip_type && formData.slip_type !== 'information') {
+          const generatedImage = await generateSlip(normalizedData, formData.slip_type);
+          if (generatedImage) {
+            normalizedData.slip_image = generatedImage;
+          }
+        }
+        // --------------------------------
 
         setResult({ ...normalizedData, isModification: !!selectedService.serviceType, isStatusCheck });
 
