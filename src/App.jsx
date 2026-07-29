@@ -712,13 +712,17 @@ export default function App() {
       )}
       <div className={!isOnline ? "pt-6" : ""}>
         {toast && (
-          <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-sm font-bold flex items-center gap-2 transition-all transform animate-in fade-in slide-in-from-top-4 backdrop-blur-md border ${
-              toast.tone === 'red' ? 'bg-rose-500/90 text-white border-rose-600/50' : 
-              toast.tone === 'green' ? 'bg-emerald-500/90 text-white border-emerald-600/50' : 
-              'bg-slate-900/90 text-white border-slate-800'
+          <div className={`fixed top-6 left-1/2 -translate-x-1/2 z-50 px-4 py-3 w-[90vw] max-w-sm rounded-2xl shadow-xl flex items-start gap-3 transition-all transform animate-in fade-in slide-in-from-top-4 border ${
+              toast.tone === 'red' ? 'bg-rose-50 text-rose-800 border-rose-200' : 
+              toast.tone === 'green' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 
+              'bg-white text-slate-800 border-slate-200'
             }`}>
-            {toast.tone === 'red' ? <XCircle size={16} /> : toast.tone === 'green' ? <CheckCircle2 size={16} /> : null}
-            {toast.msg}
+            <div className={`shrink-0 mt-0.5 ${toast.tone === 'red' ? 'text-rose-600' : toast.tone === 'green' ? 'text-emerald-600' : 'text-slate-400'}`}>
+               {toast.tone === 'red' ? <XCircle size={18} /> : toast.tone === 'green' ? <CheckCircle2 size={18} /> : <Activity size={18} />}
+            </div>
+            <div className="text-[13px] font-semibold leading-snug">
+               {toast.msg}
+            </div>
           </div>
         )}
         {!user ? (
