@@ -1268,7 +1268,7 @@ function LiveVerification({ ctx }) {
         // Map names and fields
         if (normalizedData.first_name || normalizedData.firstName) normalizedData.firstname = normalizedData.first_name || normalizedData.firstName;
         if (normalizedData.last_name || normalizedData.lastName) normalizedData.surname = normalizedData.last_name || normalizedData.lastName;
-        if (normalizedData.birthdate || normalizedData.dateOfBirth) normalizedData.dob = normalizedData.birthdate || normalizedData.dateOfBirth;
+        if (normalizedData.birthdate || normalizedData.dateOfBirth || normalizedData.date_of_birth) normalizedData.dob = normalizedData.birthdate || normalizedData.dateOfBirth || normalizedData.date_of_birth;
         if (normalizedData.address || normalizedData.residentialAddress) normalizedData.residence_address = normalizedData.address || normalizedData.residentialAddress;
         if (normalizedData.phoneNumber1) normalizedData.phone = normalizedData.phoneNumber1;
 
