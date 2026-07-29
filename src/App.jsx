@@ -2809,24 +2809,6 @@ function SettingsManager({ ctx }) {
     <div className="max-w-4xl">
       <h2 className="text-2xl font-black tracking-tight text-slate-900 mb-6">Settings & Services</h2>
 
-      {/* API Key Integrations */}
-      <SectionTitle>API Integrations</SectionTitle>
-      <Card className="p-6 mb-8 border-l-4 border-l-blue-500 shadow-sm">
-        <p className="text-sm font-medium text-slate-500 mb-5 leading-relaxed">Configure your API keys for live verifications.</p>
-        <div className="grid sm:grid-cols-2 gap-5 mb-5">
-          <Field label="FasterVerify API Key (NIN Searches)">
-            <TextInput type="password" value={fasterverifyKey} onChange={e => setFasterverifyKey(e.target.value)} placeholder="Enter FasterVerify API Key" disabled={keyLoading} />
-          </Field>
-          <Field label="CheckMyNINBVN API Key (BVN Searches)">
-            <TextInput type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Enter CheckMyNINBVN API Key" disabled={keyLoading} />
-          </Field>
-          <Field label="Paystack Secret Key (Optional)">
-            <TextInput type="password" value={paystackKey} onChange={e => setPaystackKey(e.target.value)} placeholder="sk_test_..." disabled={keyLoading} />
-          </Field>
-        </div>
-        <Btn onClick={saveApiKeys} loading={keyLoading} icon={Check}>Save API Keys</Btn>
-      </Card>
-
       {/* Pricing Table */}
       <SectionTitle>Registration Types & Pricing</SectionTitle>
       <Card className="overflow-hidden mb-8 shadow-sm">
