@@ -23,18 +23,19 @@ Deno.serve(async (req) => {
     if (idempotency_key) {
       const authHeader = req.headers.get('Authorization');
       if (!authHeader) {
-        return new Response(JSON.stringify({ error: 'Missing Authorization header for idempotency' }), { status: 401, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: 'Missing Authorization header for idempotency', edge_status: 401 }), { status: 200, headers: corsHeaders });
       }
       
       const supabaseClient = createClient(
         Deno.env.get('SUPABASE_URL') ?? '',
         Deno.env.get('SUPABASE_ANON_KEY') ?? '',
-        { global: { headers: { Authorization: authHeader } } }
+        { global: { headers: { Authorization: authHeader || '' } } }
       );
       
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: 'Unauthorized for idempotency check' }), { status: 401, headers: corsHeaders });
+      let userId = '00000000-0000-0000-0000-000000000000';
+      if (authHeader) {
+        const { data: { user } } = await supabaseClient.auth.getUser();
+        if (user) userId = user.id;
       }
 
       const sortObjectKeys = (obj: any): any => {
@@ -55,23 +56,23 @@ Deno.serve(async (req) => {
 
       const { data: idempCheck, error: idempError } = await supabaseClient.rpc(
         'check_idempotency', 
-        { p_key: idempotency_key, p_user_id: user.id, p_payload_hash: payloadHash }
+        { p_key: idempotency_key, p_user_id: userId, p_payload_hash: payloadHash }
       );
 
       if (idempError || !idempCheck) {
         console.error('Idempotency RPC Error:', idempError);
-        return new Response(JSON.stringify({ error: 'Internal server error during idempotency check' }), { status: 500, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: 'Internal server error during idempotency check', edge_status: 500 }), { status: 200, headers: corsHeaders });
       }
 
       if (idempCheck.allowed === false) {
         if (idempCheck.reason === 'key_reuse_mismatch') {
-          return new Response(JSON.stringify({ error: 'Idempotency key already used with different request data. Use a new key for a new request.' }), { status: 409, headers: corsHeaders });
+          return new Response(JSON.stringify({ error: 'Idempotency key already used with different request data. Use a new key for a new request.', edge_status: 409 }), { status: 200, headers: corsHeaders });
         }
-        return new Response(JSON.stringify({ error: 'Duplicate request rejected' }), { status: 409, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: 'Duplicate request rejected', edge_status: 409 }), { status: 200, headers: corsHeaders });
       }
 
       if (idempCheck.reason === 'retry_completed') {
-         return new Response(JSON.stringify({ error: 'Request already completed successfully previously. Please check ledger.' }), { status: 409, headers: corsHeaders });
+         return new Response(JSON.stringify({ error: 'Request already completed successfully previously. Please check ledger.', edge_status: 409 }), { status: 200, headers: corsHeaders });
       }
     }
     // --- END IDEMPOTENCY CHECK ---
@@ -119,14 +120,14 @@ Deno.serve(async (req) => {
     const response = await fetch(url, fetchOptions);
     const data = await response.json();
 
-    return new Response(JSON.stringify(data), {
+    return new Response(JSON.stringify({ ...data, edge_status: response.status }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: response.status,
+      status: 200,
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: error.message, edge_status: 400 }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
+      status: 200,
     });
   }
 });

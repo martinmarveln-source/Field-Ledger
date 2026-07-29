@@ -1190,17 +1190,28 @@ function LiveVerification({ ctx }) {
 
         if (edgeError) {
            console.error("Edge Function Error:", edgeError);
-           // Supabase sometimes puts the response body in the error object if it's a 4xx/5xx
+           // Supabase-js wrap 4xx/5xx in FunctionsHttpError. The actual response is in edgeError.context
            try {
-             const parsedErr = JSON.parse(edgeError.message || edgeError.context);
-             data = parsedErr; 
+             if (edgeError.context && typeof edgeError.context.json === 'function') {
+               data = await edgeError.context.json();
+             } else if (edgeError.context && typeof edgeError.context.text === 'function') {
+               data = JSON.parse(await edgeError.context.text());
+             } else {
+               const errStr = typeof edgeError.context === 'string' ? edgeError.context : edgeError.message;
+               data = JSON.parse(errStr);
+             }
            } catch {
              data = { message: edgeError.message || 'API Proxy Failed', success: false };
            }
            res = { ok: false };
         } else {
            data = edgeData;
-           res = { ok: true };
+           // The Edge Function now always returns HTTP 200, but injects edge_status for 4xx/5xx
+           if (data.edge_status && data.edge_status >= 400) {
+             res = { ok: false };
+           } else {
+             res = { ok: true };
+           }
         }
       } else {
         // Fallback for checkmynin
@@ -1285,7 +1296,8 @@ function LiveVerification({ ctx }) {
         flash(data.message || 'Operation failed or not found', 'red');
       }
     } catch (err) {
-      flash('Network error connecting to API.', 'red');
+      console.error("doVerify Error:", err);
+      flash(err.message ? `App Error: ${err.message}` : 'Network error connecting to API.', 'red');
     }
     setBusy(false);
   };
