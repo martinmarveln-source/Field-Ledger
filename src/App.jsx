@@ -1213,6 +1213,9 @@ function LiveVerification({ ctx }) {
            // The Edge Function now always returns HTTP 200, but injects edge_status for 4xx/5xx
            if (data.edge_status && data.edge_status >= 400) {
              res = { ok: false };
+             if (data.error === 'insufficient_balance' || (data.message && data.message.includes('Insufficient wallet'))) {
+               data.message = 'Verification service temporarily unavailable. Please contact ICT Support.';
+             }
              if (data.error && !data.message) data.message = data.error;
            } else {
              res = { ok: true };
