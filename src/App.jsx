@@ -917,11 +917,11 @@ function AuthScreen({ onLogin, onSignup, users, isOnline }) {
 
 const NAV = {
   agent: [['log', 'Log Work', ClipboardList], ['stats', 'My Stats', TrendingUp], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
-  supervisor: [['team', 'My Team', Users], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
+  supervisor: [['team', 'My Team', Users], ['stats', 'My Stats', TrendingUp], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['supplies', 'Supplies', Package], ['profile', 'Profile', User]],
   ict: [['queue', 'Print Queue', Printer], ['profile', 'Profile', User]],
   store: [['requests', 'Requests', Boxes], ['profile', 'Profile', User]],
-  admin: [['overview', 'Overview', Home], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
-  super_admin: [['overview', 'Overview', Home], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  admin: [['overview', 'Overview', Home], ['stats', 'My Stats', TrendingUp], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
+  super_admin: [['overview', 'Overview', Home], ['stats', 'My Stats', TrendingUp], ['log', 'Log Work', ClipboardList], ['verify', 'Live Verify', Search], ['wallet', 'Wallet', Wallet], ['settings', 'Settings & Services', Settings], ['reports', 'Reports', FileText], ['teams', 'Supervisors', Users], ['staff', 'Staff', UserPlus], ['requests', 'Logistics', Boxes], ['profile', 'Profile', User]],
 };
 
 function Dashboard({ user, setUser, users, types, activities, logistics, storeItems, onLogout, refresh, refreshing, flash, isOnline }) {
